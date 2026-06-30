@@ -1,0 +1,16 @@
+# Credenciales — NUNCA subir esto a GitHub
+.env
+credentials.json
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
