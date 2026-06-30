@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Gemini ───────────────────────────────────────────────────────────────────
 genai.configure(api_key=GEMINI_API_KEY)
-gemini = genai.GenerativeModel('gemini-1.5-flash')
+gemini = genai.GenerativeModel('gemini-2.5-flash')
 
 GEMINI_PROMPT = """Sos un asistente experto en comprobantes de pago argentinos.
 Analizá este comprobante y extraé exactamente:
