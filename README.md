@@ -5,9 +5,9 @@ Recibís un comprobante de pago (imagen o PDF) en WhatsApp → lo reenviás al b
 
 **Formato del caption:**
 ```
-Juan García | 5 | JUNIO
+Juan García, 5, JUNIO
 ```
-(Nombre | Número de cochera | Mes)
+(Nombre, Número de cochera, Mes)
 
 ---
 
@@ -118,31 +118,61 @@ Si ves `Modo polling (local)` en la terminal, está funcionando.
 
 ## Cómo usar el bot
 
-1. Abrís Telegram
-2. Buscás tu bot por username
-3. Cuando un cliente te manda un comprobante por WhatsApp, lo reenviás al bot
-4. En el caption escribís: `Nombre | Cochera | Mes`
-   - Ejemplo: `María López | 12 | JULIO`
-5. El bot responde con la confirmación y carga en Sheets automáticamente
+### Transferencia / Mercado Pago (con comprobante)
+
+1. Abrís Telegram, buscás tu bot por username
+2. Cuando un cliente te manda un comprobante por WhatsApp, lo reenviás al bot
+3. En el caption escribís: `Nombre, Cochera, Mes`
+   - Ejemplo: `María López, 12, JULIO`
+4. El bot responde con la confirmación y carga en Sheets automáticamente
 
 **Si el mes no existe en el Sheet:** el bot crea la hoja automáticamente con los encabezados.
+
+### Efectivo (sin comprobante, varias cocheras en un solo mensaje)
+
+Mandás un mensaje de texto (no hace falta `/`), primera línea con el mes y después una línea por cochera:
+
+```
+EFECTIVO, JULIO
+5, Juan García, 15000
+12, María López, 15000
+```
+
+El monto va sin separador de miles (`15000`, no `15.000` — la coma ya se usa para separar los campos). El bot carga cada línea como una fila en la misma hoja del mes, con "Efectivo" como tipo de pago, y te avisa si alguna línea no se pudo leer sin perder las demás.
+
+### Gastos
+
+Mensaje de texto con: `GASTOS, Mes, Categoría, Monto, Descripción`
+
+```
+GASTOS, JULIO, SUELDOS, 80000, Sueldo Carlos
+```
+
+Se guarda en una hoja aparte (`JULIO - GASTOS`) para no mezclarse con los ingresos.
 
 ---
 
 ## Estructura del Google Sheet
 
-Cada hoja (mes) tiene estas columnas:
+Cada mes tiene dos hojas:
 
-| Fecha | Cochera | Nombre | Monto | Tipo de Pago |
-|-------|---------|--------|-------|--------------|
-| 05/06/2025 | 5 | Juan García | 15000.00 | Transferencia |
-| 07/06/2025 | 12 | María López | 15000.00 | Mercado Pago |
+**Ingresos (`JULIO`)** — transferencia, Mercado Pago y efectivo, todos juntos:
+
+| Fecha | Cochera | Nombre | Monto | Ing. Brutos (2.5%) | Tipo de Pago |
+|-------|---------|--------|-------|---------------------|--------------|
+| 05/06/2025 | 5 | Juan García | 15000.00 | | Transferencia |
+| 07/06/2025 | 12 | María López | 15000.00 | | Mercado Pago |
+| 08/06/2025 | 7 | Carlos Díaz | 15000.00 | | Efectivo |
+
+**Gastos (`JULIO - GASTOS`)** — separada, con su propio total:
+
+| Fecha | Categoría | Monto | Descripción |
+|-------|-----------|-------|-------------|
+| 08/06/2025 | SUELDOS | 80000.00 | Sueldo Carlos |
 
 ---
 
 ## Próximos pasos (cuando quieras expandir)
 
-- Registrar pagos en efectivo con un comando de texto
-- Registrar gastos (servicios, sueldos)
-- Dashboard automático desde el Sheet
-- Resumen mensual con totales por cochera
+- Dashboard interactivo (TypeScript) con filtros sobre Ingresos / Gastos / Rendición a socios
+- Barra de progreso de rendición mensual a socios

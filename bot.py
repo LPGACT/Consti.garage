@@ -1,14 +1,15 @@
 # bot.py — Bot de registro de pagos para playa de estacionamiento
 #
 # Formatos de caption:
-#   Sin ing. brutos:  Juan García | 5 | JUNIO
-#   Con ing. brutos:  Juan García | 5 | JUNIO | IB
+#   Sin ing. brutos:  Juan García, 5, JUNIO
+#   Con ing. brutos:  Juan García, 5, JUNIO, IB
 
 import os
 import re
 import json
 import logging
 import tempfile
+import datetime
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -43,6 +44,11 @@ def format_pesos(amount: float) -> str:
     """Formatea en pesos argentinos: $140.000,00"""
     s = f"{amount:,.2f}"                                     # "140,000.00"
     return "$" + s.replace(',', 'X').replace('.', ',').replace('X', '.')
+
+
+def hoy() -> str:
+    """Fecha de hoy en formato DD/MM/YYYY, para registros sin comprobante (efectivo, gastos)."""
+    return datetime.date.today().strftime('%d/%m/%Y')
 
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -138,20 +144,67 @@ def get_or_create_sheet(mes: str) -> gspread.Worksheet:
     return ws
 
 
-# ─── Parser de caption ────────────────────────────────────────────────────────
+GASTOS_HEADER_ROW = ['Fecha', 'Categoría', 'Monto', 'Descripción']
+
+
+def get_or_create_gastos_sheet(mes: str) -> gspread.Worksheet:
+    """Obtiene o crea la hoja de gastos del mes. Separada de la de ingresos
+    para no romper los SUM() de la hoja de ingresos."""
+    titulo = f'{mes} - GASTOS'
+    spreadsheet = gc.open_by_key(SHEETS_ID)
+    try:
+        ws = spreadsheet.worksheet(titulo)
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=titulo, rows=500, cols=8)
+
+        ws.append_row(GASTOS_HEADER_ROW)
+        ws.format('A1:D1', {'textFormat': {'bold': True}})
+
+        ws.update('F1:G1', [['TOTAL GASTOS', '=SUM(C2:C500)']])
+        ws.format('F1', {'textFormat': {'bold': True}})
+        ws.format('G1', {
+            'backgroundColor': {'red': 0.85, 'green': 0.2, 'blue': 0.2},
+            'textFormat': {'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}, 'bold': True}
+        })
+
+        logger.info(f"Hoja '{titulo}' creada con resumen.")
+    return ws
+
+
+# ─── Parsers de mensajes ──────────────────────────────────────────────────────
 COCHERAS_ESPECIALES = {'MOTO', 'DOBLE'}
+
+
+def parse_cochera(raw: str) -> Optional[object]:
+    """Devuelve el número de cochera (int) o 'MOTO'/'DOBLE', o None si no es válido."""
+    raw_upper = raw.strip().upper()
+    if raw_upper in COCHERAS_ESPECIALES:
+        return raw_upper
+    match = re.search(r'\d+', raw)
+    if not match:
+        return None
+    return int(match.group())
+
+
+def parse_monto(raw: str) -> Optional[float]:
+    """Solo acepta números planos, sin separador de miles (15000, no 15.000),
+    porque la coma ya se usa como separador de campos en estos mensajes."""
+    raw = raw.strip()
+    if not re.fullmatch(r'\d+(\.\d{1,2})?', raw):
+        return None
+    return float(raw)
 
 
 def parse_caption(caption: str) -> Optional[dict]:
     """
     Formatos válidos:
-      Juan García | 5 | JUNIO          → cochera numerada, sin ing. brutos
-      Juan García | MOTO | JUNIO       → moto, sin ing. brutos
-      Juan García | DOBLE | JUNIO      → doble, sin ing. brutos
-      Juan García | 5 | JUNIO | IB     → cochera numerada, con ing. brutos
-      Juan García | MOTO | JUNIO | IB  → moto, con ing. brutos
+      Juan García, 5, JUNIO          → cochera numerada, sin ing. brutos
+      Juan García, MOTO, JUNIO       → moto, sin ing. brutos
+      Juan García, DOBLE, JUNIO      → doble, sin ing. brutos
+      Juan García, 5, JUNIO, IB      → cochera numerada, con ing. brutos
+      Juan García, MOTO, JUNIO, IB   → moto, con ing. brutos
     """
-    parts = [p.strip() for p in caption.split('|')]
+    parts = [p.strip() for p in caption.split(',')]
     if len(parts) not in (3, 4):
         return None
 
@@ -161,14 +214,9 @@ def parse_caption(caption: str) -> Optional[dict]:
     if not nombre or not mes:
         return None
 
-    cochera_upper = cochera_raw.upper()
-    if cochera_upper in COCHERAS_ESPECIALES:
-        cochera = cochera_upper
-    else:
-        match = re.search(r'\d+', cochera_raw)
-        if not match:
-            return None
-        cochera = int(match.group())
+    cochera = parse_cochera(cochera_raw)
+    if cochera is None:
+        return None
 
     return {
         'nombre':     nombre,
@@ -178,17 +226,97 @@ def parse_caption(caption: str) -> Optional[dict]:
     }
 
 
+def parse_efectivo_message(text: str) -> Optional[dict]:
+    """
+    Formato:
+      EFECTIVO, Mes
+      Cochera, Nombre, Monto
+      Cochera, Nombre, Monto
+      ...
+    Devuelve {'mes': str, 'filas': [...], 'errores': [...]}, o None si ni
+    siquiera la primera línea tiene el formato esperado.
+    """
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+    if not lines:
+        return None
+
+    header = [p.strip() for p in lines[0].split(',')]
+    if len(header) < 2 or header[0].upper() != 'EFECTIVO' or not header[1]:
+        return None
+    mes = header[1].upper()
+
+    filas = []
+    errores = []
+    for i, line in enumerate(lines[1:], start=2):
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) != 3:
+            errores.append(f"Línea {i}: \"{line}\" — esperaba Cochera, Nombre, Monto")
+            continue
+
+        cochera_raw, nombre, monto_raw = parts
+
+        cochera = parse_cochera(cochera_raw)
+        if cochera is None:
+            errores.append(f"Línea {i}: cochera inválida \"{cochera_raw}\"")
+            continue
+
+        if not nombre:
+            errores.append(f"Línea {i}: falta el nombre")
+            continue
+
+        monto = parse_monto(monto_raw)
+        if monto is None:
+            errores.append(f"Línea {i}: monto inválido \"{monto_raw}\" (usá solo números, sin puntos de miles, ej. 15000)")
+            continue
+
+        filas.append({'cochera': cochera, 'nombre': nombre, 'monto': monto})
+
+    return {'mes': mes, 'filas': filas, 'errores': errores}
+
+
+def parse_gastos_message(text: str) -> Optional[dict]:
+    """
+    Formato:
+      GASTOS, Mes, Categoría, Monto, Descripción
+    """
+    parts = [p.strip() for p in text.strip().split(',', 4)]
+    if len(parts) != 5 or parts[0].upper() != 'GASTOS':
+        return None
+
+    _, mes, categoria, monto_raw, descripcion = parts
+    if not mes or not categoria or not descripcion:
+        return None
+
+    monto = parse_monto(monto_raw)
+    if monto is None:
+        return None
+
+    return {
+        'mes':         mes.upper(),
+        'categoria':   categoria.upper(),
+        'monto':       monto,
+        'descripcion': descripcion
+    }
+
+
 # ─── Handlers ─────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🅿️ *Bot de Registro de Pagos*\n\n"
-        "Mandame una imagen o PDF del comprobante con el caption:\n\n"
-        "`Nombre | Cochera | Mes`\n"
-        "`Nombre | Cochera | Mes | IB` ← con ing. brutos\n\n"
-        "*Ejemplos:*\n"
-        "`Juan García | 5 | JUNIO`\n"
-        "`María López | MOTO | JUNIO`\n"
-        "`Carlos Díaz | DOBLE | JUNIO | IB`",
+        "*Transferencia / Mercado Pago* — mandame la imagen o PDF del comprobante con el caption:\n"
+        "`Nombre, Cochera, Mes`\n"
+        "`Nombre, Cochera, Mes, IB` ← con ing. brutos\n"
+        "Ejemplo: `Juan García, 5, JUNIO`\n\n"
+        "*Efectivo* — mensaje de texto, una línea por cochera:\n"
+        "`EFECTIVO, Mes`\n"
+        "`Cochera, Nombre, Monto`\n"
+        "Ejemplo:\n"
+        "`EFECTIVO, JUNIO`\n"
+        "`5, Juan García, 15000`\n"
+        "`12, María López, 15000`\n\n"
+        "*Gastos* — mensaje de texto:\n"
+        "`GASTOS, Mes, Categoría, Monto, Descripción`\n"
+        "Ejemplo: `GASTOS, JUNIO, SUELDOS, 80000, Sueldo Carlos`",
         parse_mode='Markdown'
     )
 
@@ -206,9 +334,9 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not data:
         await message.reply_text(
             "❌ *Formato incorrecto*\n\n"
-            "Sin ing. brutos: `Nombre | Cochera | Mes`\n"
-            "Con ing. brutos: `Nombre | Cochera | Mes | IB`\n\n"
-            "Ejemplo: `Juan García | 5 | JUNIO | IB`",
+            "Sin ing. brutos: `Nombre, Cochera, Mes`\n"
+            "Con ing. brutos: `Nombre, Cochera, Mes, IB`\n\n"
+            "Ejemplo: `Juan García, 5, JUNIO, IB`",
             parse_mode='Markdown'
         )
         return
@@ -297,6 +425,124 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
             os.unlink(tmp_path)
 
 
+async def handle_efectivo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    data = message.text and parse_efectivo_message(message.text)
+
+    if not data:
+        await message.reply_text(
+            "❌ *Formato incorrecto*\n\n"
+            "Primera línea: `EFECTIVO, Mes`\n"
+            "Una línea por cochera: `Cochera, Nombre, Monto`\n\n"
+            "Ejemplo:\n"
+            "`EFECTIVO, JUNIO`\n"
+            "`5, Juan García, 15000`\n"
+            "`12, María López, 15000`",
+            parse_mode='Markdown'
+        )
+        return
+
+    if not data['filas']:
+        await message.reply_text(
+            "❌ No reconocí ninguna línea de cochera válida.\n\n"
+            + "\n".join(data['errores']),
+        )
+        return
+
+    try:
+        ws = get_or_create_sheet(data['mes'])
+        fecha = hoy()
+        ws.append_rows([
+            [fecha, fila['cochera'], fila['nombre'], fila['monto'], '', 'Efectivo']
+            for fila in data['filas']
+        ])
+
+        total = sum(fila['monto'] for fila in data['filas'])
+        detalle = "\n".join(
+            f"🅿️ Cochera {fila['cochera']} — {fila['nombre']} — {format_pesos(fila['monto'])}"
+            for fila in data['filas']
+        )
+
+        resumen = (
+            f"✅ *Efectivo cargado — {data['mes']}*\n\n"
+            f"{detalle}\n\n"
+            f"💰 Total: {format_pesos(total)} ({len(data['filas'])} cocheras)"
+        )
+        if data['errores']:
+            resumen += "\n\n⚠️ *Líneas no cargadas:*\n" + "\n".join(data['errores'])
+
+        await message.reply_text(resumen, parse_mode='Markdown')
+
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets APIError (efectivo): {e}")
+        await message.reply_text(
+            f"❌ *Error al guardar en Google Sheets*\n\n`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Error inesperado (efectivo): {e}", exc_info=True)
+        await message.reply_text(
+            f"❌ *Error inesperado*\n\n`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+
+
+async def handle_gastos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    data = message.text and parse_gastos_message(message.text)
+
+    if not data:
+        await message.reply_text(
+            "❌ *Formato incorrecto*\n\n"
+            "`GASTOS, Mes, Categoría, Monto, Descripción`\n\n"
+            "Ejemplo: `GASTOS, JUNIO, SUELDOS, 80000, Sueldo Carlos`",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        ws = get_or_create_gastos_sheet(data['mes'])
+        ws.append_row([hoy(), data['categoria'], data['monto'], data['descripcion']])
+
+        await message.reply_text(
+            f"✅ *Gasto registrado — {data['mes']}*\n\n"
+            f"🏷️ {data['categoria']}\n"
+            f"💸 {format_pesos(data['monto'])}\n"
+            f"📝 {data['descripcion']}",
+            parse_mode='Markdown'
+        )
+
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets APIError (gastos): {e}")
+        await message.reply_text(
+            f"❌ *Error al guardar en Google Sheets*\n\n`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Error inesperado (gastos): {e}", exc_info=True)
+        await message.reply_text(
+            f"❌ *Error inesperado*\n\n`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enruta mensajes de texto sin '/' según la primera palabra: EFECTIVO o GASTOS.
+    Cualquier otro texto se ignora — evita responderle a charla suelta."""
+    message = update.message
+
+    if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
+        await message.reply_text("🚫 No tenés permisos para usar este bot.")
+        return
+
+    primera_palabra = message.text.strip().split(',')[0].strip().upper()
+
+    if primera_palabra == 'EFECTIVO':
+        await handle_efectivo(update, context)
+    elif primera_palabra == 'GASTOS':
+        await handle_gastos(update, context)
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -305,6 +551,10 @@ def main():
     app.add_handler(MessageHandler(
         filters.PHOTO | filters.Document.ALL,
         handle_comprobante
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_text
     ))
 
     if WEBHOOK_URL:
