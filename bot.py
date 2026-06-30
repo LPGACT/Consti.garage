@@ -21,7 +21,10 @@ from telegram.ext import (
 )
 from PIL import Image
 
-load_dotenv()
+# En local, los secretos viven fuera de la carpeta del proyecto (no sincronizada
+# por OneDrive/git). En Render no existe esa carpeta y load_dotenv() no hace nada,
+# por lo que se usan las variables de entorno reales del servicio.
+load_dotenv(os.path.join(os.path.expanduser('~'), 'secrets', '.env'))
 
 # ─── Variables de entorno ─────────────────────────────────────────────────────
 TELEGRAM_TOKEN  = os.getenv('TELEGRAM_TOKEN')
@@ -90,7 +93,8 @@ def build_gspread_client() -> gspread.Client:
             json.loads(creds_json), scopes=SCOPES
         )
     else:
-        creds = Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+        creds_path = os.path.join(os.path.expanduser('~'), 'secrets', 'credentials.json')
+        creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
     return gspread.authorize(creds)
 
 
