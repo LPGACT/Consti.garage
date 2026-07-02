@@ -148,7 +148,7 @@ Mensaje de texto con: `GASTOS, Mes, Categoría, Monto, Descripción`
 GASTOS, JULIO, SUELDOS, 80000, Sueldo Carlos
 ```
 
-Se guarda en una hoja aparte (`JULIO - GASTOS`) para no mezclarse con los ingresos.
+Se guarda en una hoja aparte (`JULIO - GASTOS`) para no mezclarse con los ingresos. Esa hoja también tiene el resumen del mes: Total Ingresos (neto), Total Gastos y Resultado Neto (columnas F-G). El resumen se crea la primera vez que registrás un gasto en ese mes — si nunca cargás ningún gasto en un mes, esa hoja no existe y no hay resumen para ese mes.
 
 ---
 

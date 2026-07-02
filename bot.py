@@ -149,7 +149,10 @@ GASTOS_HEADER_ROW = ['Fecha', 'Categoría', 'Monto', 'Descripción']
 
 def get_or_create_gastos_sheet(mes: str) -> gspread.Worksheet:
     """Obtiene o crea la hoja de gastos del mes. Separada de la de ingresos
-    para no romper los SUM() de la hoja de ingresos."""
+    para no romper los SUM() de la de ingresos, pero con un resumen que
+    cruza ambas: total ingresos (neto de Ing. Brutos), total gastos y
+    resultado neto del mes."""
+    get_or_create_sheet(mes)  # asegura que la hoja de ingresos exista antes de referenciarla
     titulo = f'{mes} - GASTOS'
     spreadsheet = gc.open_by_key(SHEETS_ID)
     try:
@@ -160,10 +163,24 @@ def get_or_create_gastos_sheet(mes: str) -> gspread.Worksheet:
         ws.append_row(GASTOS_HEADER_ROW)
         ws.format('A1:D1', {'textFormat': {'bold': True}})
 
-        ws.update('F1:G1', [['TOTAL GASTOS', '=SUM(C2:C500)']])
-        ws.format('F1', {'textFormat': {'bold': True}})
+        # ── Resumen (columnas F-G): ingresos vs. gastos vs. resultado ─────────
+        resumen = [
+            ['TOTAL INGRESOS (neto)', f"='{mes}'!H3"],
+            ['TOTAL GASTOS',          '=SUM(C2:C500)'],
+            ['RESULTADO NETO',        '=G1-G2'],
+        ]
+        ws.update('F1:G3', resumen)
+        ws.format('F1:F3', {'textFormat': {'bold': True}})
         ws.format('G1', {
+            'backgroundColor': {'red': 0.18, 'green': 0.62, 'blue': 0.18},
+            'textFormat': {'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}, 'bold': True}
+        })
+        ws.format('G2', {
             'backgroundColor': {'red': 0.85, 'green': 0.2, 'blue': 0.2},
+            'textFormat': {'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}, 'bold': True}
+        })
+        ws.format('G3', {
+            'backgroundColor': {'red': 0.18, 'green': 0.44, 'blue': 0.78},
             'textFormat': {'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}, 'bold': True}
         })
 
