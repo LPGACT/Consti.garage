@@ -11,6 +11,43 @@ Juan García, 5, JUNIO
 
 ---
 
+## ⚡ Actualizar la instalación existente (hacer esto una vez, en la compu con el `.env`)
+
+Si ya tenías el bot corriendo antes del dashboard, hacé esto en orden en la computadora donde vive tu `.env`/`credentials.json`:
+
+1. **Traer el código nuevo**
+   ```bash
+   git pull
+   pip install -r requirements.txt
+   ```
+   (agrega `fastapi` y `uvicorn`, necesarios para el dashboard)
+
+2. **Migrar las hojas de mes existentes** (agregarles el año) — ver la sección [Nombres de hoja con año](#nombres-de-hoja-con-año) más abajo. Sin este paso, el bot va a crear hojas nuevas duplicadas la próxima vez que uses un mes que ya existía.
+
+3. **Crear la pestaña `PADRON`** en el mismo Google Sheet, con el layout exacto de la sección [Hoja PADRON](#hoja-padron-para-el-dashboard) más abajo (`A1:D130` autos/dobles, `H1:I24` motos). Sin esto, el dashboard no puede calcular cocheras cobradas/pendientes.
+
+4. **Agregar al `.env`** las variables nuevas (mirá `.env.example`):
+   ```
+   DASHBOARD_PASSWORD=elegí-una-contraseña
+   RENDICION_OBJETIVO_BASE=9800000
+   ```
+   (`SERIE_CACHE_TTL_SECONDS` y `PADRON_CACHE_TTL_SECONDS` son opcionales, tienen default)
+
+5. **Correr el bot como siempre:**
+   ```bash
+   python bot.py
+   ```
+
+6. **Correr el dashboard** (en otra terminal):
+   ```bash
+   uvicorn dashboard.main:app --reload --port 8001
+   ```
+   Abrí `http://localhost:8001` (o desde el iPhone a `http://<IP-local-de-tu-PC>:8001` en la misma Wi-Fi) — ver [Dashboard financiero](#dashboard-financiero-pwa) para instalarlo como app.
+
+> Si el bot ya está desplegado en Render: al pushear a GitHub se redespliega solo (si el auto-deploy está activo). No te olvides igual de hacer los pasos 2 y 3 directamente sobre el Google Sheet **real** de producción — eso no lo hace el deploy por vos.
+
+---
+
 ## PASO 1 — Crear el bot de Telegram
 
 1. Abrí Telegram y buscá **@BotFather**

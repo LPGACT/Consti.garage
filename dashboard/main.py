@@ -24,6 +24,11 @@ from dashboard.padron import leer_padron
 
 load_dotenv(os.path.join(os.path.expanduser('~'), 'secrets', '.env'))
 
+# Modo demo: sirve datos de ejemplo en vez de pegarle a Google Sheets, para
+# poder correr el dashboard sin credenciales reales (revisión visual local).
+# El deploy real nunca setea esta variable.
+DEMO = os.getenv('DASHBOARD_DEMO', '') == '1'
+
 SHEETS_ID = os.getenv('GOOGLE_SHEETS_ID')
 RENDICION_OBJETIVO_BASE = float(os.getenv('RENDICION_OBJETIVO_BASE', 9_800_000))
 SERIE_CACHE_TTL = int(os.getenv('SERIE_CACHE_TTL_SECONDS', 120))
@@ -31,7 +36,7 @@ PADRON_CACHE_TTL = int(os.getenv('PADRON_CACHE_TTL_SECONDS', 300))
 
 STATIC_DIR = Path(__file__).parent / 'static'
 
-gc = build_gspread_client()
+gc = None if DEMO else build_gspread_client()
 
 app = FastAPI(title="Consti.garage — Dashboard")
 
@@ -78,6 +83,9 @@ async def login(body: LoginBody):
 
 @app.get('/api/meses', dependencies=[Depends(require_auth)])
 async def meses():
+    if DEMO:
+        from dashboard.demo_data import DEMO_MESES
+        return DEMO_MESES
     return [
         {'mes': mes, 'anio': anio, 'titulo': titulo}
         for mes, anio, titulo in listar_meses_ingresos(_spreadsheet())
@@ -86,10 +94,15 @@ async def meses():
 
 @app.get('/api/dashboard', dependencies=[Depends(require_auth)])
 async def dashboard(mes: Optional[str] = None, anio: Optional[int] = None):
-    hoy = datetime.date.today()
-    mes = (mes or _nombre_mes_actual(hoy)).strip().upper()
-    anio = anio or hoy.year
+    mes, anio = _resolver_mes(mes, anio)
     titulo = mes_sheet_title(mes, anio)
+
+    if DEMO:
+        from dashboard.demo_data import DEMO_DASHBOARD
+        metricas = DEMO_DASHBOARD.get(titulo)
+        if metricas is None:
+            raise HTTPException(status_code=404, detail=f"No hay datos demo para '{titulo}'.")
+        return metricas
 
     serie = _serie_mensual()
     metricas = serie.get(titulo)
@@ -101,13 +114,35 @@ async def dashboard(mes: Optional[str] = None, anio: Optional[int] = None):
     return respuesta
 
 
+@app.get('/api/ingresos', dependencies=[Depends(require_auth)])
+async def ingresos(mes: Optional[str] = None, anio: Optional[int] = None):
+    mes, anio = _resolver_mes(mes, anio)
+    titulo = mes_sheet_title(mes, anio)
+
+    if DEMO:
+        from dashboard.demo_data import DEMO_INGRESOS
+        return DEMO_INGRESOS.get(titulo, [])
+
+    serie = _serie_mensual()
+    metricas = serie.get(titulo)
+    if metricas is None:
+        raise HTTPException(status_code=404, detail=f"No hay datos para '{titulo}'.")
+
+    return [
+        {**r, 'monto_fmt': format_pesos(r['monto'])}
+        for r in metricas['_ingresos_raw']
+    ]
+
+
 @app.get('/api/gastos', dependencies=[Depends(require_auth)])
 async def gastos(mes: Optional[str] = None, anio: Optional[int] = None):
-    hoy = datetime.date.today()
-    mes = (mes or _nombre_mes_actual(hoy)).strip().upper()
-    anio = anio or hoy.year
-    titulo = gastos_sheet_title(mes, anio)
+    mes, anio = _resolver_mes(mes, anio)
 
+    if DEMO:
+        from dashboard.demo_data import DEMO_GASTOS
+        return DEMO_GASTOS.get(mes_sheet_title(mes, anio), [])
+
+    titulo = gastos_sheet_title(mes, anio)
     filas = leer_gastos(_spreadsheet(), titulo)
     return [
         {**g, 'monto_fmt': format_pesos(g['monto'])}
@@ -128,6 +163,19 @@ _MESES_ES = [
 
 def _nombre_mes_actual(fecha: datetime.date) -> str:
     return _MESES_ES[fecha.month - 1]
+
+
+def _resolver_mes(mes: Optional[str], anio: Optional[int]) -> tuple:
+    """Completa mes/año faltantes. En DEMO usa el último mes de ejemplo (no
+    'hoy' real) — si no, /api/dashboard sin query params devuelve 404 apenas
+    la fecha del sistema sale del rango fijo de meses que tiene demo_data.py."""
+    if DEMO:
+        from dashboard.demo_data import DEMO_MESES
+        default_mes, default_anio = DEMO_MESES[-1]['mes'], DEMO_MESES[-1]['anio']
+    else:
+        hoy = datetime.date.today()
+        default_mes, default_anio = _nombre_mes_actual(hoy), hoy.year
+    return (mes or default_mes).strip().upper(), anio or default_anio
 
 
 # ─── Estáticos (PWA) ────────────────────────────────────────────────────────

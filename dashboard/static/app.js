@@ -1,12 +1,30 @@
 const TOKEN_KEY = 'dashboard_password';
 
-const loginView = document.getElementById('login-view');
-const appView = document.getElementById('app');
-const loginError = document.getElementById('login-error');
+const TITULOS_PAGINA = {
+  resumen: ['Resumen', 'Así viene el mes'],
+  ingresos: ['Ingresos', 'Pagos recibidos este mes'],
+  gastos: ['Gastos', 'Egresos del mes'],
+  cocheras: ['Cocheras', 'Cobradas y pendientes contra el padrón'],
+};
 
 let meses = [];       // [{mes, anio, titulo}], orden cronológico
 let mesIndex = -1;
+let paginaActual = 'resumen';
+
+// Datos de la página+mes actualmente visible. Se piden de nuevo cada vez que
+// cambiás de página o de mes (nunca se sirven de un cache viejo) — así el
+// dashboard siempre refleja lo último cargado por el bot, aunque haya quedado
+// abierto en el celular mientras se registraba un pago nuevo.
+let ingresosDelMes = [];
 let gastosDelMes = [];
+let cocherasDelMes = null;
+
+// Filtros por página
+const filtros = {
+  ingresos: { tipoPago: 'TODOS', texto: '' },
+  cocheras: { estado: 'TODAS', tipo: 'TODOS', texto: '' },
+  gastos: { texto: '' },
+};
 
 function token() {
   return localStorage.getItem(TOKEN_KEY) || '';
@@ -27,17 +45,18 @@ async function fetchJSON(url, opts = {}) {
 }
 
 function mostrarLogin() {
-  loginView.classList.remove('hidden');
-  appView.classList.add('hidden');
+  document.getElementById('login-view').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
 }
 
 function mostrarApp() {
-  loginView.classList.add('hidden');
-  appView.classList.remove('hidden');
+  document.getElementById('login-view').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
 }
 
 document.getElementById('login-btn').addEventListener('click', async () => {
   const password = document.getElementById('password').value;
+  const loginError = document.getElementById('login-error');
   loginError.textContent = '';
   try {
     const resp = await fetch('/api/login', {
@@ -57,6 +76,29 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   }
 });
 
+// ── Navegación entre páginas ─────────────────────────────────────────────
+function mostrarPagina(pagina) {
+  paginaActual = pagina;
+
+  document.querySelectorAll('.page').forEach((el) => el.classList.add('hidden'));
+  document.getElementById(`page-${pagina}`).classList.remove('hidden');
+
+  document.querySelectorAll('[data-page]').forEach((el) => {
+    el.classList.toggle('active', el.dataset.page === pagina);
+  });
+
+  const [titulo, subtitulo] = TITULOS_PAGINA[pagina];
+  document.getElementById('titulo-pagina').textContent = titulo;
+  document.getElementById('subtitulo-pagina').textContent = subtitulo;
+
+  cargarPaginaActual();
+}
+
+document.querySelectorAll('[data-page]').forEach((el) => {
+  el.addEventListener('click', () => mostrarPagina(el.dataset.page));
+});
+
+// ── Selector de mes ──────────────────────────────────────────────────────
 function capitalizar(mes) {
   return mes.charAt(0) + mes.slice(1).toLowerCase();
 }
@@ -70,28 +112,84 @@ function actualizarSelectorMes() {
   document.getElementById('mes-next').disabled = mesIndex >= meses.length - 1;
 }
 
-async function cargarMesActual() {
-  const actual = meses[mesIndex];
-  if (!actual) return;
-  actualizarSelectorMes();
-  await Promise.all([
-    cargarDashboard(actual.mes, actual.anio),
-    cargarGastos(actual.mes, actual.anio),
-  ]);
-}
-
-function fmtPct(pct) {
-  return `${Math.round(pct * 100)}%`;
-}
-
-async function cargarDashboard(mes, anio) {
-  let data;
-  try {
-    data = await fetchJSON(`/api/dashboard?mes=${encodeURIComponent(mes)}&anio=${anio}`);
-  } catch (e) {
-    return;
+document.getElementById('mes-prev').addEventListener('click', () => {
+  if (mesIndex > 0) {
+    mesIndex -= 1;
+    actualizarSelectorMes();
+    cargarPaginaActual();
   }
+});
 
+document.getElementById('mes-next').addEventListener('click', () => {
+  if (mesIndex < meses.length - 1) {
+    mesIndex += 1;
+    actualizarSelectorMes();
+    cargarPaginaActual();
+  }
+});
+
+// ── Carga y render por página ────────────────────────────────────────────
+function tituloMesActual() {
+  const actual = meses[mesIndex];
+  return actual ? actual.titulo : null;
+}
+
+function mostrarError() {
+  document.getElementById('error-banner').classList.remove('hidden');
+}
+
+function ocultarError() {
+  document.getElementById('error-banner').classList.add('hidden');
+}
+
+document.getElementById('error-retry').addEventListener('click', () => {
+  ocultarError();
+  cargarPaginaActual();
+});
+
+function actualizarBadgeCocheras(cocheras) {
+  const badges = document.querySelectorAll('.cocheras-badge');
+  const hayAviso = cocheras && cocheras.sin_identificar > 0;
+  badges.forEach((b) => {
+    b.classList.toggle('hidden', !hayAviso);
+    if (hayAviso) b.textContent = cocheras.sin_identificar;
+  });
+}
+
+async function cargarPaginaActual() {
+  const titulo = tituloMesActual();
+  if (!titulo) return;
+
+  try {
+    if (paginaActual === 'resumen') {
+      const data = await fetchJSON(`/api/dashboard?mes=${mesQuery()}`);
+      renderResumen(data);
+    } else if (paginaActual === 'ingresos') {
+      ingresosDelMes = await fetchJSON(`/api/ingresos?mes=${mesQuery()}`);
+      renderIngresos();
+    } else if (paginaActual === 'gastos') {
+      gastosDelMes = await fetchJSON(`/api/gastos?mes=${mesQuery()}`);
+      renderGastos();
+    } else if (paginaActual === 'cocheras') {
+      const data = await fetchJSON(`/api/dashboard?mes=${mesQuery()}`);
+      cocherasDelMes = data.cocheras;
+      actualizarBadgeCocheras(data.cocheras);
+      renderCocheras();
+    }
+    ocultarError();
+  } catch (e) {
+    if (e.message === '401') return; // ya se mostró la pantalla de login
+    mostrarError();
+  }
+}
+
+function mesQuery() {
+  const actual = meses[mesIndex];
+  return `${encodeURIComponent(actual.mes)}&anio=${actual.anio}`;
+}
+
+// ── Resumen ──────────────────────────────────────────────────────────────
+function renderResumen(data) {
   document.getElementById('hero-ganancia').textContent = data.ganancia_mes_fmt;
   document.getElementById('tile-ingreso-bruto').textContent = data.ingreso_bruto_fmt;
   document.getElementById('tile-ingreso-neto').textContent = data.ingreso_neto_fmt;
@@ -104,7 +202,7 @@ async function cargarDashboard(mes, anio) {
   fill.style.width = `${pct * 100}%`;
   fill.classList.toggle('completo', data.progreso_pct >= 1);
   document.getElementById('meter-entregado').textContent =
-    `${data.entregado_a_socios_fmt} (${fmtPct(data.progreso_pct)})`;
+    `${data.entregado_a_socios_fmt} (${Math.round(data.progreso_pct * 100)}%)`;
   document.getElementById('meter-objetivo').textContent = `Meta: ${data.objetivo_rendicion_fmt}`;
 
   const badge = document.getElementById('badge-deuda');
@@ -116,58 +214,83 @@ async function cargarDashboard(mes, anio) {
     badge.classList.add('hidden');
   }
 
-  const cocheras = data.cocheras;
-  document.getElementById('cocheras-cobradas').textContent = cocheras.cobradas;
-  document.getElementById('cocheras-total').textContent = `de ${cocheras.total} cobradas`;
+  document.getElementById('resumen-cocheras-cobradas').textContent = data.cocheras.cobradas;
+  document.getElementById('resumen-cocheras-total').textContent = `de ${data.cocheras.total} cobradas`;
 
-  const avisoSinId = document.getElementById('cocheras-sin-identificar');
-  if (cocheras.sin_identificar > 0) {
-    avisoSinId.classList.remove('hidden');
-    avisoSinId.textContent =
-      `${cocheras.sin_identificar} cobro(s) con "DOBLE" genérico (formato viejo) sin cochera identificada.`;
-  } else {
-    avisoSinId.classList.add('hidden');
-  }
+  actualizarBadgeCocheras(data.cocheras);
+}
 
-  const lista = document.getElementById('pendientes-lista');
-  lista.innerHTML = '';
-  if (cocheras.pendientes.length === 0) {
-    lista.innerHTML = '<div class="empty-state">No hay cocheras pendientes.</div>';
+// ── Ingresos ─────────────────────────────────────────────────────────────
+function renderIngresos() {
+  const datos = ingresosDelMes;
+  const f = filtros.ingresos;
+
+  const filtrados = datos.filter((r) => {
+    if (f.tipoPago !== 'TODOS' && r.tipo_pago !== f.tipoPago) return false;
+    if (f.texto) {
+      const q = f.texto.toLowerCase();
+      const cochera = String(r.cochera).toLowerCase();
+      if (!r.nombre.toLowerCase().includes(q) && !cochera.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const cont = document.getElementById('ingresos-lista');
+  cont.innerHTML = '';
+  if (filtrados.length === 0) {
+    cont.innerHTML = '<div class="empty-state">Sin ingresos que coincidan.</div>';
+    return;
   }
-  cocheras.pendientes.forEach((p) => {
+  filtrados.forEach((r) => {
     const div = document.createElement('div');
-    div.className = 'pendiente-item';
+    div.className = 'lista-item';
     div.innerHTML = `
-      <span>${p.nro} — ${p.nombre || (p.vacia ? '(vacía)' : '(sin nombre)')}</span>
-      <span class="tag">${p.tipo}</span>
+      <span class="info">
+        <span class="titulo">${r.nombre} — Cochera ${r.cochera}</span>
+        <span class="subtitulo">${r.fecha} · <span class="tag tag-tipo">${r.tipo_pago}</span></span>
+      </span>
+      <span class="monto">${r.monto_fmt}</span>
     `;
-    lista.appendChild(div);
+    cont.appendChild(div);
   });
 }
 
-async function cargarGastos(mes, anio) {
-  try {
-    gastosDelMes = await fetchJSON(`/api/gastos?mes=${encodeURIComponent(mes)}&anio=${anio}`);
-  } catch (e) {
-    gastosDelMes = [];
-  }
-  renderGastos(gastosDelMes);
-}
+document.querySelectorAll('#chips-tipo-pago .chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('#chips-tipo-pago .chip').forEach((c) => c.classList.remove('active'));
+    chip.classList.add('active');
+    filtros.ingresos.tipoPago = chip.dataset.value;
+    renderIngresos();
+  });
+});
 
-function renderGastos(lista) {
+document.getElementById('buscar-ingresos').addEventListener('input', (e) => {
+  filtros.ingresos.texto = e.target.value.trim();
+  renderIngresos();
+});
+
+// ── Gastos ───────────────────────────────────────────────────────────────
+function renderGastos() {
+  const datos = gastosDelMes;
+  const q = filtros.gastos.texto.toLowerCase();
+
+  const filtrados = q
+    ? datos.filter((g) => g.categoria.toLowerCase().includes(q) || g.descripcion.toLowerCase().includes(q))
+    : datos;
+
   const cont = document.getElementById('gastos-lista');
   cont.innerHTML = '';
-  if (lista.length === 0) {
+  if (filtrados.length === 0) {
     cont.innerHTML = '<div class="empty-state">Sin gastos que coincidan.</div>';
     return;
   }
-  lista.forEach((g) => {
+  filtrados.forEach((g) => {
     const div = document.createElement('div');
-    div.className = 'gasto-item';
+    div.className = 'lista-item';
     div.innerHTML = `
       <span class="info">
-        <span class="categoria">${g.categoria}</span>
-        <span class="descripcion">${g.descripcion}</span>
+        <span class="titulo">${g.categoria}</span>
+        <span class="subtitulo">${g.fecha} · ${g.descripcion}</span>
       </span>
       <span class="monto">${g.monto_fmt}</span>
     `;
@@ -176,27 +299,75 @@ function renderGastos(lista) {
 }
 
 document.getElementById('buscar-gastos').addEventListener('input', (e) => {
-  const q = e.target.value.trim().toLowerCase();
-  const filtrados = gastosDelMes.filter(
-    (g) => g.categoria.toLowerCase().includes(q) || g.descripcion.toLowerCase().includes(q)
-  );
-  renderGastos(filtrados);
+  filtros.gastos.texto = e.target.value.trim();
+  renderGastos();
 });
 
-document.getElementById('mes-prev').addEventListener('click', () => {
-  if (mesIndex > 0) {
-    mesIndex -= 1;
-    cargarMesActual();
+// ── Cocheras ─────────────────────────────────────────────────────────────
+function renderCocheras() {
+  const datos = cocherasDelMes;
+  if (!datos) return;
+
+  const avisoSinId = document.getElementById('cocheras-sin-identificar');
+  if (datos.sin_identificar > 0) {
+    avisoSinId.classList.remove('hidden');
+    avisoSinId.textContent =
+      `${datos.sin_identificar} cobro(s) con "DOBLE" genérico (formato viejo) sin cochera identificada.`;
+  } else {
+    avisoSinId.classList.add('hidden');
   }
-});
 
-document.getElementById('mes-next').addEventListener('click', () => {
-  if (mesIndex < meses.length - 1) {
-    mesIndex += 1;
-    cargarMesActual();
+  const f = filtros.cocheras;
+  const filtradas = datos.todas.filter((c) => {
+    if (f.estado === 'COBRADAS' && !c.cobrada) return false;
+    if (f.estado === 'PENDIENTES' && c.cobrada) return false;
+    if (f.tipo !== 'TODOS' && c.tipo !== f.tipo) return false;
+    if (f.texto) {
+      const q = f.texto.toLowerCase();
+      if (!String(c.nro).includes(q) && !c.nombre.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const cont = document.getElementById('cocheras-lista');
+  cont.innerHTML = '';
+  if (filtradas.length === 0) {
+    cont.innerHTML = '<div class="empty-state">No hay cocheras que coincidan.</div>';
+    return;
   }
+  filtradas.forEach((c) => {
+    const div = document.createElement('div');
+    div.className = 'lista-item';
+    const nombre = c.nombre || (c.vacia ? '(vacía)' : '(sin nombre)');
+    div.innerHTML = `
+      <span class="info">
+        <span class="titulo">${c.nro} — ${nombre}</span>
+        <span class="subtitulo"><span class="tag tag-tipo">${c.tipo}</span></span>
+      </span>
+      <span class="tag ${c.cobrada ? 'tag-cobrada' : 'tag-pendiente'}">${c.cobrada ? 'Cobrada' : 'Pendiente'}</span>
+    `;
+    cont.appendChild(div);
+  });
+}
+
+['chips-estado-cochera', 'chips-tipo-cochera'].forEach((id) => {
+  document.querySelectorAll(`#${id} .chip`).forEach((chip) => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll(`#${id} .chip`).forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      if (id === 'chips-estado-cochera') filtros.cocheras.estado = chip.dataset.value;
+      else filtros.cocheras.tipo = chip.dataset.value;
+      renderCocheras();
+    });
+  });
 });
 
+document.getElementById('buscar-cocheras').addEventListener('input', (e) => {
+  filtros.cocheras.texto = e.target.value.trim();
+  renderCocheras();
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────
 async function init() {
   try {
     meses = await fetchJSON('/api/meses');
@@ -208,7 +379,8 @@ async function init() {
     return;
   }
   mesIndex = meses.length - 1; // mes más reciente
-  await cargarMesActual();
+  actualizarSelectorMes();
+  mostrarPagina('resumen');
 }
 
 if (token()) {

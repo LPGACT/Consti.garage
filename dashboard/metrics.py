@@ -202,20 +202,23 @@ def estado_cocheras(ingresos: list, padron: dict) -> dict:
         else:
             logger.warning(f"Cochera no reconocida en fila de ingresos: {fila!r}")
 
-    pendientes_autos = [c for c in padron['autos'] if c.nro not in cobrados_nro]
-    pendientes_motos = [
-        c for c in padron['motos'] if normaliza_nombre(c.nombre) not in cobrados_moto_nombre
-    ]
-
-    total = len(padron['autos']) + len(padron['motos'])
-    cobradas = total - len(pendientes_autos) - len(pendientes_motos)
+    todas = (
+        [
+            {'nro': c.nro, 'nombre': c.nombre, 'tipo': 'auto', 'vacia': not c.ocupada,
+             'cobrada': c.nro in cobrados_nro}
+            for c in padron['autos']
+        ] + [
+            {'nro': c.nro, 'nombre': c.nombre, 'tipo': 'moto', 'vacia': not c.ocupada,
+             'cobrada': normaliza_nombre(c.nombre) in cobrados_moto_nombre}
+            for c in padron['motos']
+        ]
+    )
+    pendientes = [c for c in todas if not c['cobrada']]
 
     return {
-        'total': total,
-        'cobradas': cobradas,
+        'total': len(todas),
+        'cobradas': len(todas) - len(pendientes),
         'sin_identificar': sin_identificar,
-        'pendientes': (
-            [{'nro': c.nro, 'nombre': c.nombre, 'tipo': 'auto', 'vacia': not c.ocupada} for c in pendientes_autos]
-            + [{'nro': c.nro, 'nombre': c.nombre, 'tipo': 'moto', 'vacia': not c.ocupada} for c in pendientes_motos]
-        ),
+        'pendientes': pendientes,
+        'todas': todas,
     }

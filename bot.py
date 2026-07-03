@@ -398,7 +398,7 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
             monto,
             descuento_ib,
             payment['tipo_pago']
-        ])
+        ], table_range='A1:F1')
 
         ib_line = (
             f"\n📊 Ing. Brutos: -{format_pesos(descuento_ib)}\n"
@@ -476,7 +476,7 @@ async def handle_efectivo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ws.append_rows([
             [fecha, fila['cochera'], fila['nombre'], fila['monto'], '', 'Efectivo']
             for fila in data['filas']
-        ])
+        ], table_range='A1:F1')
 
         total = sum(fila['monto'] for fila in data['filas'])
         detalle = "\n".join(
@@ -523,7 +523,7 @@ async def handle_gastos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         ws = get_or_create_gastos_sheet(data['mes'])
-        ws.append_row([hoy(), data['categoria'], data['monto'], data['descripcion']])
+        ws.append_row([hoy(), data['categoria'], data['monto'], data['descripcion']], table_range='A1:D1')
 
         await message.reply_text(
             f"✅ *Gasto registrado — {data['mes']}*\n\n"
