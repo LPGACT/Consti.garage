@@ -570,8 +570,8 @@ async def handle_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cell = ws.find(pattern, in_column=1)   # columna A: NRO autos/dobles
         col_nombre = 2                          # columna B: NOMBRE autos/dobles
         if cell is None or cell.row == 1:
-            cell = ws.find(pattern, in_column=7)  # columna G: NRO motos
-            col_nombre = 8                        # columna H: NOMBRE motos
+            cell = ws.find(pattern, in_column=8)  # columna H: NRO motos
+            col_nombre = 9                        # columna I: NOMBRE motos
 
         if cell is None or cell.row == 1:
             await message.reply_text(f"❌ No encontré la cochera {data['nro']} en el padrón.")

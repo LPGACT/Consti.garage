@@ -1,11 +1,10 @@
 # dashboard/padron.py — Lectura y parseo de la hoja PADRON.
 #
-# Layout esperado (a confirmar contra los datos reales una vez pegados —
-# si no coincide, ajustar PADRON_AUTOS_RANGE / PADRON_MOTOS_RANGE, no el
-# resto del código):
+# Layout real (confirmado contra el Sheet del usuario):
 #
-#   A1:E<N>  autos/dobles — NRO COCHERA | NOMBRE | MONTO | PLANTA | ANOTACIONES
-#   G1:H<N>  motos        — NRO COCHERA | NOMBRE
+#   A1:D130  autos/dobles — NRO COCHERA | NOMBRE | PLANTA | ANOTACIONES
+#            (no hay columna MONTO — el precio no se trackea por cochera acá)
+#   H1:I24   motos        — NRO COCHERA | NOMBRE
 #
 # Nombre vacío = cochera vacía/sin dueño. Fin de tabla = primera fila con
 # NRO COCHERA vacío (no se usa NOMBRE vacío como fin, porque nombre vacío
@@ -14,7 +13,6 @@
 import logging
 import unicodedata
 from dataclasses import dataclass
-from typing import Optional
 
 import gspread
 
@@ -22,9 +20,9 @@ from sheets_common import PADRON_SHEET_TITLE
 
 logger = logging.getLogger(__name__)
 
-PADRON_AUTOS_RANGE = 'A1:E300'
-PADRON_MOTOS_RANGE = 'G1:H300'
-PADRON_AUTOS_HEADER = ['NRO COCHERA', 'NOMBRE', 'MONTO', 'PLANTA', 'ANOTACIONES']
+PADRON_AUTOS_RANGE = 'A1:D130'
+PADRON_MOTOS_RANGE = 'H1:I24'
+PADRON_AUTOS_HEADER = ['NRO COCHERA', 'NOMBRE', 'PLANTA', 'ANOTACIONES']
 PADRON_MOTOS_HEADER = ['NRO COCHERA', 'NOMBRE']
 
 
@@ -37,7 +35,6 @@ class CocheraPadron:
     tabla: str  # 'autos' | 'motos'
     nro: int
     nombre: str
-    monto: Optional[float] = None
     planta: str = ''
     anotaciones: str = ''
 
@@ -52,16 +49,6 @@ def normaliza_nombre(nombre: str) -> str:
     matching de motos por nombre)."""
     sin_acentos = unicodedata.normalize('NFKD', nombre).encode('ascii', 'ignore').decode()
     return ' '.join(sin_acentos.strip().upper().split())
-
-
-def _parse_monto_opcional(raw: str) -> Optional[float]:
-    raw = (raw or '').strip().replace('.', '').replace(',', '.')
-    if not raw:
-        return None
-    try:
-        return float(raw)
-    except ValueError:
-        return None
 
 
 def _normaliza_header(fila: list) -> list:
@@ -93,9 +80,8 @@ def _parse_tabla(filas: list, header_esperado: list, tabla: str) -> list:
             tabla=tabla,
             nro=int(nro_raw),
             nombre=nombre,
-            monto=_parse_monto_opcional(fila[2]) if tabla == 'autos' and len(fila) > 2 else None,
-            planta=(fila[3].strip() if tabla == 'autos' and len(fila) > 3 else ''),
-            anotaciones=(fila[4].strip() if tabla == 'autos' and len(fila) > 4 else ''),
+            planta=(fila[2].strip() if tabla == 'autos' and len(fila) > 2 else ''),
+            anotaciones=(fila[3].strip() if tabla == 'autos' and len(fila) > 3 else ''),
         ))
     return resultado
 

@@ -175,8 +175,8 @@ Las hojas de mes ahora se llaman `"JULIO 2026"` en vez de `"JULIO"` — el año 
 
 Se usa para saber qué cocheras existen y cruzarlas contra los pagos del mes. Es una pestaña nueva llamada exactamente `PADRON` en el mismo spreadsheet, con dos tablas:
 
-- **Autos y dobles** en `A1:E`: `NRO COCHERA | NOMBRE | MONTO | PLANTA | ANOTACIONES`. Nombre vacío = cochera vacía. Para las dobles (dos espacios con un precio distinto, ej. 34 y 35), poné en ANOTACIONES el número de la pareja (ej. `"doble con 35"`) para que el dashboard las marque cobradas juntas.
-- **Motos** en `G1:H`: `NRO COCHERA | NOMBRE`. Los pagos de motos se cargan al bot sin número (`Juan, MOTO, JULIO`) y se cruzan contra esta tabla **por nombre** — si el nombre no coincide exactamente (typo, o cambio de inquilino sin actualizar acá), el dashboard no lo va a poder identificar.
+- **Autos y dobles** en `A1:D130`: `NRO COCHERA | NOMBRE | PLANTA | ANOTACIONES`. Nombre vacío = cochera vacía. Para las dobles (dos espacios con un precio distinto, ej. 34 y 35), poné en ANOTACIONES el número de la pareja (ej. `"doble con 35"`) para que el dashboard las marque cobradas juntas.
+- **Motos** en `H1:I24`: `NRO COCHERA | NOMBRE`. Los pagos de motos se cargan al bot sin número (`Juan, MOTO, JULIO`) y se cruzan contra esta tabla **por nombre** — si el nombre no coincide exactamente (typo, o cambio de inquilino sin actualizar acá), el dashboard no lo va a poder identificar.
 
 Si el layout real de tu Sheet no coincide con estos rangos exactos, el dashboard va a fallar con un error claro (no va a leer datos corridos en silencio) — avisame para ajustar `PADRON_AUTOS_RANGE`/`PADRON_MOTOS_RANGE` en `dashboard/padron.py`.
 
