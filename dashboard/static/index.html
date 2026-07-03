@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Consti.garage</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0b0b0b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Consti.garage">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <div id="login-view">
+    <h1>🅿️ Consti.garage</h1>
+    <input type="password" id="password" placeholder="Contraseña" autocomplete="current-password">
+    <button id="login-btn" class="btn-primary">Entrar</button>
+    <div id="login-error"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <h1>🅿️ Consti.garage</h1>
+      <div class="mes-selector">
+        <button id="mes-prev" aria-label="Mes anterior">‹</button>
+        <span id="mes-label">—</span>
+        <button id="mes-next" aria-label="Mes siguiente">›</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="label">Ganancia del mes</div>
+      <div class="value" id="hero-ganancia">—</div>
+    </section>
+
+    <section class="tiles">
+      <div class="tile">
+        <div class="label">Ingreso bruto</div>
+        <div class="value" id="tile-ingreso-bruto">—</div>
+      </div>
+      <div class="tile">
+        <div class="label">Ingreso neto</div>
+        <div class="value" id="tile-ingreso-neto">—</div>
+      </div>
+      <div class="tile">
+        <div class="label">Transferencias + MP</div>
+        <div class="value" id="tile-transferencias">—</div>
+      </div>
+      <div class="tile">
+        <div class="label">Efectivo</div>
+        <div class="value" id="tile-efectivo">—</div>
+      </div>
+      <div class="tile">
+        <div class="label">Gastos</div>
+        <div class="value" id="tile-gastos">—</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Rendición a socios</h2>
+      <div class="meter-track">
+        <div class="meter-fill" id="meter-fill" style="width: 0%"></div>
+      </div>
+      <div class="meter-caption">
+        <span id="meter-entregado">—</span>
+        <span id="meter-objetivo">—</span>
+      </div>
+      <div class="badge-warning hidden" id="badge-deuda">
+        <span class="icon">⚠</span>
+        <span id="badge-deuda-texto"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Cocheras</h2>
+      <div class="cocheras-resumen">
+        <span class="num" id="cocheras-cobradas">—</span>
+        <span class="de" id="cocheras-total">de — cobradas</span>
+      </div>
+      <div id="cocheras-sin-identificar" class="aviso-sin-identificar hidden"></div>
+      <details class="pendientes" id="pendientes-wrap">
+        <summary>Ver pendientes</summary>
+        <div id="pendientes-lista"></div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Gastos</h2>
+      <input type="text" id="buscar-gastos" placeholder="Buscar por categoría o descripción…">
+      <div id="gastos-lista"></div>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

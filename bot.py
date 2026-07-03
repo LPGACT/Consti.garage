@@ -15,12 +15,17 @@ from dotenv import load_dotenv
 
 import google.generativeai as genai
 import gspread
-from google.oauth2.service_account import Credentials
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes
 )
 from PIL import Image
+
+from sheets_common import (
+    build_gspread_client, format_pesos, ING_BRUTOS_PCT,
+    HEADER_ROW, GASTOS_HEADER_ROW, PADRON_SHEET_TITLE,
+    mes_sheet_title, gastos_sheet_title,
+)
 
 # En local, los secretos viven fuera de la carpeta del proyecto (no sincronizada
 # por OneDrive/git). En Render no existe esa carpeta y load_dotenv() no hace nada,
@@ -34,16 +39,6 @@ SHEETS_ID       = os.getenv('GOOGLE_SHEETS_ID')
 ALLOWED_USER_ID = int(os.getenv('ALLOWED_USER_ID', 0))
 WEBHOOK_URL     = os.getenv('WEBHOOK_URL', '')
 PORT            = int(os.getenv('PORT', 8000))
-
-ING_BRUTOS_PCT = 0.025  # 2.5%
-
-HEADER_ROW = ['Fecha', 'Cochera', 'Nombre', 'Monto', 'Ing. Brutos (2.5%)', 'Tipo de Pago']
-
-
-def format_pesos(amount: float) -> str:
-    """Formatea en pesos argentinos: $140.000,00"""
-    s = f"{amount:,.2f}"                                     # "140,000.00"
-    return "$" + s.replace(',', 'X').replace('.', ',').replace('X', '.')
 
 
 def hoy() -> str:
@@ -91,29 +86,18 @@ def extract_from_comprobante(file_path: str, mime_type: str) -> dict:
 
 
 # ─── Google Sheets ────────────────────────────────────────────────────────────
-def build_gspread_client() -> gspread.Client:
-    SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-    creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
-    if creds_json:
-        creds = Credentials.from_service_account_info(
-            json.loads(creds_json), scopes=SCOPES
-        )
-    else:
-        creds_path = os.path.join(os.path.expanduser('~'), 'secrets', 'credentials.json')
-        creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-    return gspread.authorize(creds)
-
-
 gc = build_gspread_client()
 
 
 def get_or_create_sheet(mes: str) -> gspread.Worksheet:
-    """Obtiene o crea la hoja del mes. Si la crea, agrega encabezados y resumen."""
+    """Obtiene o crea la hoja del mes (con año, ej. 'JULIO 2026'). Si la crea,
+    agrega encabezados y resumen."""
+    titulo = mes_sheet_title(mes)
     spreadsheet = gc.open_by_key(SHEETS_ID)
     try:
-        ws = spreadsheet.worksheet(mes)
+        ws = spreadsheet.worksheet(titulo)
     except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=mes, rows=500, cols=12)
+        ws = spreadsheet.add_worksheet(title=titulo, rows=500, cols=12)
 
         # ── Encabezados de tabla ──────────────────────────────────────────────
         ws.append_row(HEADER_ROW)
@@ -140,11 +124,8 @@ def get_or_create_sheet(mes: str) -> gspread.Worksheet:
             'textFormat': {'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}, 'bold': True}
         })
 
-        logger.info(f"Hoja '{mes}' creada con resumen.")
+        logger.info(f"Hoja '{titulo}' creada con resumen.")
     return ws
-
-
-GASTOS_HEADER_ROW = ['Fecha', 'Categoría', 'Monto', 'Descripción']
 
 
 def get_or_create_gastos_sheet(mes: str) -> gspread.Worksheet:
@@ -153,7 +134,8 @@ def get_or_create_gastos_sheet(mes: str) -> gspread.Worksheet:
     cruza ambas: total ingresos (neto de Ing. Brutos), total gastos y
     resultado neto del mes."""
     get_or_create_sheet(mes)  # asegura que la hoja de ingresos exista antes de referenciarla
-    titulo = f'{mes} - GASTOS'
+    titulo_ingresos = mes_sheet_title(mes)
+    titulo = gastos_sheet_title(mes)
     spreadsheet = gc.open_by_key(SHEETS_ID)
     try:
         ws = spreadsheet.worksheet(titulo)
@@ -165,7 +147,7 @@ def get_or_create_gastos_sheet(mes: str) -> gspread.Worksheet:
 
         # ── Resumen (columnas F-G): ingresos vs. gastos vs. resultado ─────────
         resumen = [
-            ['TOTAL INGRESOS (neto)', f"='{mes}'!H3"],
+            ['TOTAL INGRESOS (neto)', f"='{titulo_ingresos}'!H3"],
             ['TOTAL GASTOS',          '=SUM(C2:C500)'],
             ['RESULTADO NETO',        '=G1-G2'],
         ]
@@ -316,6 +298,25 @@ def parse_gastos_message(text: str) -> Optional[dict]:
     }
 
 
+def parse_cambio_message(text: str) -> Optional[dict]:
+    """
+    Formato:
+      CAMBIO, Nro, NombreNuevo
+    Sirve tanto para cocheras de auto/doble como para motos: ambas tienen
+    columna NRO COCHERA en el padrón, aunque los captions de pago de motos
+    no usen ese número (se matchean por nombre).
+    """
+    parts = [p.strip() for p in text.strip().split(',', 2)]
+    if len(parts) != 3 or parts[0].upper() != 'CAMBIO':
+        return None
+
+    _, nro_raw, nombre_nuevo = parts
+    if not re.fullmatch(r'\d+', nro_raw) or not nombre_nuevo:
+        return None
+
+    return {'nro': int(nro_raw), 'nombre_nuevo': nombre_nuevo}
+
+
 # ─── Handlers ─────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -333,7 +334,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`12, María López, 15000`\n\n"
         "*Gastos* — mensaje de texto:\n"
         "`GASTOS, Mes, Categoría, Monto, Descripción`\n"
-        "Ejemplo: `GASTOS, JUNIO, SUELDOS, 80000, Sueldo Carlos`",
+        "Ejemplo: `GASTOS, JUNIO, SUELDOS, 80000, Sueldo Carlos`\n\n"
+        "*Cambio de dueño de cochera* — mensaje de texto:\n"
+        "`CAMBIO, Nro, NombreNuevo`\n"
+        "Ejemplo: `CAMBIO, 34, Pedro Gómez`",
         parse_mode='Markdown'
     )
 
@@ -543,9 +547,66 @@ async def handle_gastos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def handle_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reasigna el dueño de una cochera (auto o moto) en la hoja PADRON,
+    buscando el número tanto en la tabla de autos (columna A) como en la
+    de motos (columna G) — ambas tienen NRO COCHERA propio."""
+    message = update.message
+    data = message.text and parse_cambio_message(message.text)
+
+    if not data:
+        await message.reply_text(
+            "❌ *Formato incorrecto*\n\n"
+            "`CAMBIO, Nro, NombreNuevo`\n\n"
+            "Ejemplo: `CAMBIO, 34, Pedro Gómez`",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        ws = gc.open_by_key(SHEETS_ID).worksheet(PADRON_SHEET_TITLE)
+        pattern = re.compile(rf'^{data["nro"]}$')
+
+        cell = ws.find(pattern, in_column=1)   # columna A: NRO autos/dobles
+        col_nombre = 2                          # columna B: NOMBRE autos/dobles
+        if cell is None or cell.row == 1:
+            cell = ws.find(pattern, in_column=7)  # columna G: NRO motos
+            col_nombre = 8                        # columna H: NOMBRE motos
+
+        if cell is None or cell.row == 1:
+            await message.reply_text(f"❌ No encontré la cochera {data['nro']} en el padrón.")
+            return
+
+        nombre_viejo = ws.cell(cell.row, col_nombre).value or '(vacía)'
+        ws.update_cell(cell.row, col_nombre, data['nombre_nuevo'])
+
+        await message.reply_text(
+            f"🔄 *Cochera {data['nro']}*\n{nombre_viejo} → {data['nombre_nuevo']}",
+            parse_mode='Markdown'
+        )
+
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets APIError (cambio): {e}")
+        await message.reply_text(
+            f"❌ *Error al guardar en Google Sheets*\n\n`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+    except gspread.exceptions.WorksheetNotFound:
+        await message.reply_text(
+            f"❌ No encontré la hoja '{PADRON_SHEET_TITLE}'. ¿Ya la creaste en el spreadsheet?"
+        )
+    except Exception as e:
+        logger.error(f"Error inesperado (cambio): {e}", exc_info=True)
+        await message.reply_text(
+            f"❌ *Error inesperado*\n\n`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enruta mensajes de texto sin '/' según la primera palabra: EFECTIVO o GASTOS.
-    Cualquier otro texto se ignora — evita responderle a charla suelta."""
+    """Enruta mensajes de texto sin '/' según la primera palabra: EFECTIVO,
+    GASTOS o CAMBIO. Cualquier otro texto se ignora — evita responderle a
+    charla suelta."""
     message = update.message
 
     if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
@@ -558,6 +619,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_efectivo(update, context)
     elif primera_palabra == 'GASTOS':
         await handle_gastos(update, context)
+    elif primera_palabra == 'CAMBIO':
+        await handle_cambio(update, context)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

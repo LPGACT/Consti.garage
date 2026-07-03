@@ -148,7 +148,37 @@ Mensaje de texto con: `GASTOS, Mes, Categoría, Monto, Descripción`
 GASTOS, JULIO, SUELDOS, 80000, Sueldo Carlos
 ```
 
-Se guarda en una hoja aparte (`JULIO - GASTOS`) para no mezclarse con los ingresos. Esa hoja también tiene el resumen del mes: Total Ingresos (neto), Total Gastos y Resultado Neto (columnas F-G). El resumen se crea la primera vez que registrás un gasto en ese mes — si nunca cargás ningún gasto en un mes, esa hoja no existe y no hay resumen para ese mes.
+Se guarda en una hoja aparte (`JULIO 2026 - GASTOS`) para no mezclarse con los ingresos. Esa hoja también tiene el resumen del mes: Total Ingresos (neto), Total Gastos y Resultado Neto (columnas F-G). El resumen se crea la primera vez que registrás un gasto en ese mes — si nunca cargás ningún gasto en un mes, esa hoja no existe y no hay resumen para ese mes.
+
+### Cambio de dueño de cochera
+
+Mensaje de texto con: `CAMBIO, Nro, NombreNuevo`
+
+```
+CAMBIO, 34, Pedro Gómez
+```
+
+Busca la cochera (auto o moto) por número en la hoja `PADRON` y reemplaza el nombre. Sirve para cuando cambia el inquilino. El bot confirma con el nombre viejo y el nuevo.
+
+---
+
+## Nombres de hoja con año
+
+Las hojas de mes ahora se llaman `"JULIO 2026"` en vez de `"JULIO"` — el año se agrega automáticamente (el año actual), sin que cambies cómo escribís el caption. Esto evita que un mismo mes en dos años distintos (ej. julio 2026 y julio 2027) termine escribiendo en la misma hoja.
+
+**Si ya tenías hojas de mes de antes de este cambio**, hay que renombrarlas a mano una sola vez:
+1. Renombrá cada hoja de mes agregándole el año (`JULIO` → `JULIO 2026`).
+2. Renombrá también su hoja de gastos correspondiente (`JULIO - GASTOS` → `JULIO 2026 - GASTOS`).
+3. En la hoja de gastos, corregí a mano la fórmula de la celda G1 (`='JULIO'!H3` → `='JULIO 2026'!H3`) — es solo cosmético para esa celda del propio Sheet, el dashboard no depende de ella.
+
+## Hoja PADRON (para el dashboard)
+
+Se usa para saber qué cocheras existen y cruzarlas contra los pagos del mes. Es una pestaña nueva llamada exactamente `PADRON` en el mismo spreadsheet, con dos tablas:
+
+- **Autos y dobles** en `A1:E`: `NRO COCHERA | NOMBRE | MONTO | PLANTA | ANOTACIONES`. Nombre vacío = cochera vacía. Para las dobles (dos espacios con un precio distinto, ej. 34 y 35), poné en ANOTACIONES el número de la pareja (ej. `"doble con 35"`) para que el dashboard las marque cobradas juntas.
+- **Motos** en `G1:H`: `NRO COCHERA | NOMBRE`. Los pagos de motos se cargan al bot sin número (`Juan, MOTO, JULIO`) y se cruzan contra esta tabla **por nombre** — si el nombre no coincide exactamente (typo, o cambio de inquilino sin actualizar acá), el dashboard no lo va a poder identificar.
+
+Si el layout real de tu Sheet no coincide con estos rangos exactos, el dashboard va a fallar con un error claro (no va a leer datos corridos en silencio) — avisame para ajustar `PADRON_AUTOS_RANGE`/`PADRON_MOTOS_RANGE` en `dashboard/padron.py`.
 
 ---
 
@@ -156,7 +186,7 @@ Se guarda en una hoja aparte (`JULIO - GASTOS`) para no mezclarse con los ingres
 
 Cada mes tiene dos hojas:
 
-**Ingresos (`JULIO`)** — transferencia, Mercado Pago y efectivo, todos juntos:
+**Ingresos (`JULIO 2026`)** — transferencia, Mercado Pago y efectivo, todos juntos:
 
 | Fecha | Cochera | Nombre | Monto | Ing. Brutos (2.5%) | Tipo de Pago |
 |-------|---------|--------|-------|---------------------|--------------|
@@ -164,7 +194,7 @@ Cada mes tiene dos hojas:
 | 07/06/2025 | 12 | María López | 15000.00 | | Mercado Pago |
 | 08/06/2025 | 7 | Carlos Díaz | 15000.00 | | Efectivo |
 
-**Gastos (`JULIO - GASTOS`)** — separada, con su propio total:
+**Gastos (`JULIO 2026 - GASTOS`)** — separada, con su propio total:
 
 | Fecha | Categoría | Monto | Descripción |
 |-------|-----------|-------|-------------|
@@ -172,7 +202,28 @@ Cada mes tiene dos hojas:
 
 ---
 
-## Próximos pasos (cuando quieras expandir)
+## Dashboard financiero (PWA)
 
-- Dashboard interactivo (TypeScript) con filtros sobre Ingresos / Gastos / Rendición a socios
-- Barra de progreso de rendición mensual a socios
+Vive en `dashboard/` — un backend (FastAPI) que lee los mismos Sheets del bot y calcula, mes a mes: ganancia, ingresos por tipo de pago, gastos filtrables, progreso de la rendición a socios (con la deuda que se arrastra si un mes el efectivo no alcanza) y cocheras cobradas/pendientes contra el padrón.
+
+### Correrlo en local
+
+```bash
+pip install -r requirements.txt
+uvicorn dashboard.main:app --reload --port 8001
+```
+
+Necesita las mismas variables `GOOGLE_SHEETS_ID` / `GOOGLE_CREDENTIALS_JSON` (o `credentials.json` local) que el bot, más `DASHBOARD_PASSWORD` y `RENDICION_OBJETIVO_BASE` (ver `.env.example`).
+
+Abrí `http://localhost:8001` en la compu, o desde el iPhone a `http://<IP-local-de-tu-PC>:8001` estando en la misma red Wi-Fi.
+
+### Instalarlo como app en el iPhone
+
+Con el dashboard abierto en Safari: **Compartir → Agregar a pantalla de inicio**. Queda como un ícono más, sin pasar por la App Store.
+
+### Deploy
+
+No está desplegado todavía. Cuando quieras ponerlo en Render, es un segundo Web Service en el mismo repo:
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `uvicorn dashboard.main:app --host 0.0.0.0 --port $PORT`
+- Mismas env vars de Sheets + `DASHBOARD_PASSWORD` + `RENDICION_OBJETIVO_BASE`

@@ -1,0 +1,221 @@
+# dashboard/metrics.py — Fórmulas financieras del dashboard y arrastre de
+# deuda de rendición a socios mes a mes. Todo se deriva de las hojas de
+# ingresos/gastos que ya escribe bot.py — no hay ningún ledger nuevo que
+# mantener sincronizado.
+#
+# Reglas de negocio (cerradas con el dueño de la playa, no son supuestos):
+#   - La rendición a socios ($9.800.000, config. RENDICION_OBJETIVO_BASE)
+#     sale SOLO del efectivo, después de pagar los gastos con esa misma
+#     plata. Es fija, no depende de cuántas cocheras estén vacías.
+#   - Si el efectivo no alcanza, el faltante NO sale del bolsillo del dueño
+#     ese mes — se suma al objetivo del mes siguiente ("deuda heredada").
+#   - Lo que gana el dueño = todo lo que le transfieren (Transferencia +
+#     Mercado Pago, nunca se reparte) + lo que sobra del efectivo después
+#     de gastos y rendición (nunca negativo: el déficit ya está cubierto
+#     por la deuda heredada, no reduce la ganancia del mes en curso).
+
+import logging
+import re
+from typing import Optional
+
+import gspread
+
+from sheets_common import MESES_ORDEN, PADRON_SHEET_TITLE, gastos_sheet_title, parse_mes_sheet_title
+from dashboard.padron import normaliza_nombre
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_float(value) -> float:
+    if value in (None, ''):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def leer_ingresos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
+    """Filas de la hoja de ingresos de un mes, o [] si no existe."""
+    try:
+        ws = spreadsheet.worksheet(titulo)
+    except gspread.WorksheetNotFound:
+        return []
+
+    registros = ws.get_all_records(value_render_option='UNFORMATTED_VALUE')
+    resultado = []
+    for r in registros:
+        if not str(r.get('Fecha', '')).strip():
+            continue
+        resultado.append({
+            'fecha': r.get('Fecha'),
+            'cochera': r.get('Cochera'),
+            'nombre': str(r.get('Nombre', '')).strip(),
+            'monto': _parse_float(r.get('Monto')),
+            'ing_brutos': _parse_float(r.get('Ing. Brutos (2.5%)')),
+            'tipo_pago': str(r.get('Tipo de Pago', '')).strip(),
+        })
+    return resultado
+
+
+def leer_gastos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
+    """Filas de la hoja de gastos de un mes, o [] si no existe (mes sin
+    ningún gasto cargado todavía)."""
+    try:
+        ws = spreadsheet.worksheet(titulo)
+    except gspread.WorksheetNotFound:
+        return []
+
+    registros = ws.get_all_records(value_render_option='UNFORMATTED_VALUE')
+    resultado = []
+    for r in registros:
+        if not str(r.get('Fecha', '')).strip():
+            continue
+        resultado.append({
+            'fecha': r.get('Fecha'),
+            'categoria': str(r.get('Categoría', '')).strip(),
+            'monto': _parse_float(r.get('Monto')),
+            'descripcion': str(r.get('Descripción', '')).strip(),
+        })
+    return resultado
+
+
+def listar_meses_ingresos(spreadsheet: gspread.Spreadsheet) -> list:
+    """(mes, año, título) de todas las hojas de ingresos, ordenados
+    cronológicamente. Hojas sin año (formato viejo, todavía no migradas a
+    mano) quedan afuera con un warning en el log — no truena, pero avisa."""
+    resultado = []
+    for ws in spreadsheet.worksheets():
+        parsed = parse_mes_sheet_title(ws.title)
+        if parsed:
+            mes, year = parsed
+            resultado.append((mes, year, ws.title))
+        elif ws.title != PADRON_SHEET_TITLE and not ws.title.endswith(' - GASTOS'):
+            logger.warning(f"Hoja '{ws.title}' no matchea patrón de mes con año — excluida del dashboard.")
+    resultado.sort(key=lambda t: (t[1], MESES_ORDEN.index(t[0])))
+    return resultado
+
+
+def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base: float) -> dict:
+    """Recorre TODAS las hojas de mes en orden cronológico, acumulando el
+    déficit de rendición de un mes al siguiente. Devuelve {titulo: métricas}."""
+    meses = listar_meses_ingresos(spreadsheet)
+    deuda_acumulada = 0.0
+    por_mes = {}
+
+    for mes, year, titulo in meses:
+        ingresos = leer_ingresos(spreadsheet, titulo)
+        gastos = leer_gastos(spreadsheet, gastos_sheet_title(mes, year))
+
+        ingreso_bruto = sum(r['monto'] for r in ingresos)
+        descuento_ib = sum(r['ing_brutos'] for r in ingresos)
+        total_transferencias = sum(
+            r['monto'] for r in ingresos if r['tipo_pago'] in ('Transferencia', 'Mercado Pago')
+        )
+        total_efectivo = sum(r['monto'] for r in ingresos if r['tipo_pago'] == 'Efectivo')
+        total_gastos = sum(g['monto'] for g in gastos)
+
+        objetivo_mes = objetivo_base + deuda_acumulada
+        neto_efectivo = total_efectivo - total_gastos
+        entregado = max(min(neto_efectivo, objetivo_mes), 0)
+        deficit_nuevo = max(objetivo_mes - neto_efectivo, 0)
+        ganancia_mes = total_transferencias + max(neto_efectivo - objetivo_mes, 0)
+
+        por_mes[titulo] = {
+            'mes': mes,
+            'anio': year,
+            'titulo': titulo,
+            'ingreso_bruto': ingreso_bruto,
+            'ingreso_neto': ingreso_bruto - descuento_ib,
+            'total_transferencias': total_transferencias,
+            'total_efectivo': total_efectivo,
+            'total_gastos': total_gastos,
+            'deuda_heredada': deuda_acumulada,
+            'objetivo_rendicion': objetivo_mes,
+            'entregado_a_socios': entregado,
+            'progreso_pct': (entregado / objetivo_mes) if objetivo_mes > 0 else 1.0,
+            'ganancia_mes': ganancia_mes,
+            '_ingresos_raw': ingresos,  # uso interno de estado_cocheras, no va en la respuesta de la API
+        }
+        deuda_acumulada = deficit_nuevo
+
+    return por_mes
+
+
+def _resolver_pares_dobles(autos: list) -> dict:
+    """{nro: nro_pareja} a partir del número que aparezca en ANOTACIONES
+    (ej. 'doble con 35' → {34: 35}). Si ANOTACIONES no tiene un número
+    reconocible, esa cochera no entra en el diccionario y su pareja queda
+    sin marcar automáticamente al pagar la otra mitad del par."""
+    pares = {}
+    for c in autos:
+        anot = (c.anotaciones or '').upper()
+        if 'DOBLE' not in anot:
+            continue
+        match = re.search(r'\d+', anot)
+        if match:
+            pares[c.nro] = int(match.group())
+        else:
+            logger.warning(
+                f"PADRON: cochera {c.nro} marcada DOBLE en ANOTACIONES sin número de "
+                f"pareja reconocible ('{c.anotaciones}') — no se auto-completa el par."
+            )
+    return pares
+
+
+def _clasificar_cochera(raw) -> tuple:
+    """Devuelve ('nro', int) | ('moto', None) | ('doble_generico', None) | ('desconocido', None).
+    Necesario porque el valor de la columna Cochera puede volver de Sheets
+    como int, float (si Sheets lo guardó como número) o str ('MOTO'/'DOBLE')."""
+    if isinstance(raw, (int, float)):
+        return ('nro', int(raw))
+    texto = str(raw).strip().upper()
+    if texto == 'MOTO':
+        return ('moto', None)
+    if texto == 'DOBLE':
+        return ('doble_generico', None)
+    if texto.isdigit():
+        return ('nro', int(texto))
+    return ('desconocido', None)
+
+
+def estado_cocheras(ingresos: list, padron: dict) -> dict:
+    """Cruza los pagos del mes contra el padrón completo (autos + dobles +
+    motos). Motos matchean por nombre (decisión explícita del dueño, frágil
+    a typos/cambios de inquilino sin avisar). 'DOBLE' genérico (formato
+    viejo sin número) no se puede atribuir a una cochera puntual."""
+    pares = _resolver_pares_dobles(padron['autos'])
+    cobrados_nro = set()
+    cobrados_moto_nombre = set()
+    sin_identificar = 0
+
+    for fila in ingresos:
+        tipo, nro = _clasificar_cochera(fila['cochera'])
+        if tipo == 'moto':
+            cobrados_moto_nombre.add(normaliza_nombre(fila['nombre']))
+        elif tipo == 'doble_generico':
+            sin_identificar += 1
+        elif tipo == 'nro':
+            cobrados_nro.add(nro)
+            if nro in pares:
+                cobrados_nro.add(pares[nro])
+        else:
+            logger.warning(f"Cochera no reconocida en fila de ingresos: {fila!r}")
+
+    pendientes_autos = [c for c in padron['autos'] if c.nro not in cobrados_nro]
+    pendientes_motos = [
+        c for c in padron['motos'] if normaliza_nombre(c.nombre) not in cobrados_moto_nombre
+    ]
+
+    total = len(padron['autos']) + len(padron['motos'])
+    cobradas = total - len(pendientes_autos) - len(pendientes_motos)
+
+    return {
+        'total': total,
+        'cobradas': cobradas,
+        'sin_identificar': sin_identificar,
+        'pendientes': (
+            [{'nro': c.nro, 'nombre': c.nombre, 'tipo': 'auto', 'vacia': not c.ocupada} for c in pendientes_autos]
+            + [{'nro': c.nro, 'nombre': c.nombre, 'tipo': 'moto', 'vacia': not c.ocupada} for c in pendientes_motos]
+        ),
+    }

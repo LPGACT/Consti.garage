@@ -2,6 +2,7 @@
 .env
 credentials.json
 *.json
+!dashboard/static/manifest.json
 
 # Python
 __pycache__/
