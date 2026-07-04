@@ -130,7 +130,7 @@ def listar_meses_ingresos(spreadsheet: gspread.Spreadsheet) -> list:
         if parsed:
             mes, year = parsed
             resultado.append((mes, year, ws.title))
-        elif ws.title != PADRON_SHEET_TITLE and not ws.title.endswith(' - GASTOS'):
+        elif ws.title not in (PADRON_SHEET_TITLE, OBJETIVO_SHEET_TITLE) and not ws.title.endswith(' - GASTOS'):
             logger.warning(f"Hoja '{ws.title}' no matchea patrón de mes con año — excluida del dashboard.")
     resultado.sort(key=lambda t: (t[1], MESES_ORDEN.index(t[0])))
     return resultado
@@ -201,19 +201,26 @@ def _resolver_pares_dobles(autos: list) -> dict:
 
 
 def _clasificar_cochera(raw) -> tuple:
-    """Devuelve ('nro', int) | ('moto', None) | ('doble_generico', None) | ('desconocido', None).
+    """Devuelve ('nro', int) | ('moto', None) | ('doble_generico', None) |
+    ('externo', texto) | ('desconocido', None).
     Necesario porque el valor de la columna Cochera puede volver de Sheets
-    como int, float (si Sheets lo guardó como número) o str ('MOTO'/'DOBLE')."""
+    como int, float (si Sheets lo guardó como número) o str ('MOTO'/'DOBLE').
+    'externo' es un ingreso real que no corresponde a ninguna cochera de
+    este padrón (ej. un cliente que paga por transferencia desde otra
+    playa) — se identifica por tener texto libre que no es ninguno de los
+    valores especiales conocidos. No es un error de carga, no se loguea."""
     if isinstance(raw, (int, float)):
         return ('nro', int(raw))
     texto = str(raw).strip().upper()
+    if not texto:
+        return ('desconocido', None)
     if texto == 'MOTO':
         return ('moto', None)
     if texto == 'DOBLE':
         return ('doble_generico', None)
     if texto.isdigit():
         return ('nro', int(texto))
-    return ('desconocido', None)
+    return ('externo', texto)
 
 
 def estado_cocheras(ingresos: list, padron: dict) -> dict:
@@ -236,6 +243,8 @@ def estado_cocheras(ingresos: list, padron: dict) -> dict:
             cobrados_nro.add(nro)
             if nro in pares:
                 cobrados_nro.add(pares[nro])
+        elif tipo == 'externo':
+            pass  # ingreso legítimo, no corresponde a ninguna cochera de este padrón
         else:
             logger.warning(f"Cochera no reconocida en fila de ingresos: {fila!r}")
 
