@@ -19,6 +19,7 @@ HEADER_ROW = ['Fecha', 'Cochera', 'Nombre', 'Monto', 'Ing. Brutos (2.5%)', 'Tipo
 GASTOS_HEADER_ROW = ['Fecha', 'Categoría', 'Monto', 'Descripción']
 
 PADRON_SHEET_TITLE = 'PADRON'
+OBJETIVO_SHEET_TITLE = 'RENDICION_OBJETIVO_BASE'
 
 MESES_ORDEN = [
     'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',

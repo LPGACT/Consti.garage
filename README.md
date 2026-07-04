@@ -212,7 +212,9 @@ Las hojas de mes ahora se llaman `"JULIO 2026"` en vez de `"JULIO"` — el año 
 
 Se usa para saber qué cocheras existen y cruzarlas contra los pagos del mes. Es una pestaña nueva llamada exactamente `PADRON` en el mismo spreadsheet, con dos tablas:
 
-- **Autos y dobles** en `A1:D130`: `NRO COCHERA | NOMBRE | PLANTA | ANOTACIONES`. Nombre vacío = cochera vacía. Para las dobles (dos espacios con un precio distinto, ej. 34 y 35), poné en ANOTACIONES el número de la pareja (ej. `"doble con 35"`) para que el dashboard las marque cobradas juntas.
+- **Autos y dobles** en `A1:D130`: `NRO COCHERA | NOMBRE | PLANTA | ANOTACIONES`. Nombre vacío = cochera vacía.
+  - **Dobles**: una sola fila con el NRO COCHERA combinado (ej. `"23 y 24"`) y ANOTACIONES `DOBLE`. El dashboard la expande en las dos cocheras. Para cargar el pago en el bot usás **uno solo de los dos números puntuales** (ej. `Nombre, 23, JULIO`) — nunca `DOBLE` genérico sin número — así el dashboard sabe qué par marcar cobrado.
+  - **Espacio para motos dentro de la tabla de autos**: si el NOMBRE es `ESPACIO MOTO` o `ESPACIO MOTOS` (sea en una fila simple o en una doble combinada), esa cochera se excluye del conteo de autos — no cuenta como ocupada ni como pendiente. Las motos reales se trackean aparte, abajo.
 - **Motos** en `H1:I24`: `NRO COCHERA | NOMBRE`. Los pagos de motos se cargan al bot sin número (`Juan, MOTO, JULIO`) y se cruzan contra esta tabla **por nombre** — si el nombre no coincide exactamente (typo, o cambio de inquilino sin actualizar acá), el dashboard no lo va a poder identificar.
 
 Si el layout real de tu Sheet no coincide con estos rangos exactos, el dashboard va a fallar con un error claro (no va a leer datos corridos en silencio) — avisame para ajustar `PADRON_AUTOS_RANGE`/`PADRON_MOTOS_RANGE` en `dashboard/padron.py`.
@@ -253,6 +255,16 @@ uvicorn dashboard.main:app --reload --port 8001
 Necesita las mismas variables `GOOGLE_SHEETS_ID` / `GOOGLE_CREDENTIALS_JSON` (o `credentials.json` local) que el bot, más `DASHBOARD_PASSWORD` y `RENDICION_OBJETIVO_BASE` (ver `.env.example`).
 
 Abrí `http://localhost:8001` en la compu, o desde el iPhone a `http://<IP-local-de-tu-PC>:8001` estando en la misma red Wi-Fi.
+
+### Objetivo de rendición a socios (cambia cuando cambia el precio)
+
+El monto a rendir no es una constante fija en el `.env` — cambia cada vez que cambia el precio por cochera, y no querés que eso reescriba silenciosamente la rendición de meses ya cerrados. Por eso vive en una hoja del Sheet, `RENDICION_OBJETIVO_BASE`, con dos columnas:
+
+| Mes-Año | Objetivo |
+|---|---|
+| julio 2026 | $9.800.000 |
+
+Agregá una fila **solo cuando cambie el precio** (no hace falta una por mes) — el valor rige desde ese mes en adelante, hasta la próxima fila. `RENDICION_OBJETIVO_BASE` en el `.env`/Render solo se usa como valor por defecto para meses anteriores a la primera fila de esta hoja (o si la hoja no existe todavía).
 
 ### Instalarlo como app en el iPhone
 

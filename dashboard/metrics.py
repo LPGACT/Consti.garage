@@ -20,7 +20,10 @@ from typing import Optional
 
 import gspread
 
-from sheets_common import MESES_ORDEN, PADRON_SHEET_TITLE, gastos_sheet_title, parse_mes_sheet_title
+from sheets_common import (
+    MESES_ORDEN, OBJETIVO_SHEET_TITLE, PADRON_SHEET_TITLE,
+    gastos_sheet_title, parse_mes_sheet_title,
+)
 from dashboard.padron import normaliza_nombre
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,43 @@ def _parse_float(value) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _parse_monto_texto(value: str) -> Optional[float]:
+    """Parsea montos con formato de celda tipo '$9,800,000.00'."""
+    limpio = re.sub(r'[^\d.]', '', str(value).replace(',', ''))
+    if not limpio:
+        return None
+    try:
+        return float(limpio)
+    except ValueError:
+        return None
+
+
+def leer_objetivo_por_mes(spreadsheet: gspread.Spreadsheet) -> dict:
+    """{(mes, año): objetivo} desde la hoja RENDICION_OBJETIVO_BASE, si existe.
+    Cada fila es el objetivo vigente A PARTIR de ese mes (no hace falta una
+    fila por mes — solo se agrega una cuando cambia el precio). Filas con
+    mes/año o monto ilegible se ignoran con un warning, no rompen el resto."""
+    try:
+        ws = spreadsheet.worksheet(OBJETIVO_SHEET_TITLE)
+    except gspread.WorksheetNotFound:
+        return {}
+
+    resultado = {}
+    for fila in ws.get_all_values()[1:]:
+        if len(fila) < 2 or not fila[0].strip():
+            continue
+        parsed = parse_mes_sheet_title(fila[0].strip().upper())
+        if not parsed:
+            logger.warning(f"RENDICION_OBJETIVO_BASE: fila con mes-año ilegible '{fila[0]}', se ignora.")
+            continue
+        monto = _parse_monto_texto(fila[1])
+        if monto is None:
+            logger.warning(f"RENDICION_OBJETIVO_BASE: monto ilegible '{fila[1]}' para '{fila[0]}', se ignora.")
+            continue
+        resultado[parsed] = monto
+    return resultado
 
 
 def leer_ingresos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
@@ -96,14 +136,25 @@ def listar_meses_ingresos(spreadsheet: gspread.Spreadsheet) -> list:
     return resultado
 
 
-def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base: float) -> dict:
+def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base_default: float) -> dict:
     """Recorre TODAS las hojas de mes en orden cronológico, acumulando el
-    déficit de rendición de un mes al siguiente. Devuelve {titulo: métricas}."""
+    déficit de rendición de un mes al siguiente. Devuelve {titulo: métricas}.
+
+    El objetivo de rendición no es una constante: viene de la hoja
+    RENDICION_OBJETIVO_BASE (una fila por cada vez que cambió el precio,
+    no una fila por mes) y se arrastra hacia adelante hasta la próxima
+    fila. `objetivo_base_default` solo se usa para los meses anteriores
+    a la primera fila de esa tabla (o si la tabla no existe)."""
     meses = listar_meses_ingresos(spreadsheet)
+    objetivos_config = leer_objetivo_por_mes(spreadsheet)
     deuda_acumulada = 0.0
+    objetivo_vigente = objetivo_base_default
     por_mes = {}
 
     for mes, year, titulo in meses:
+        if (mes, year) in objetivos_config:
+            objetivo_vigente = objetivos_config[(mes, year)]
+
         ingresos = leer_ingresos(spreadsheet, titulo)
         gastos = leer_gastos(spreadsheet, gastos_sheet_title(mes, year))
 
@@ -115,7 +166,7 @@ def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base: floa
         total_efectivo = sum(r['monto'] for r in ingresos if r['tipo_pago'] == 'Efectivo')
         total_gastos = sum(g['monto'] for g in gastos)
 
-        objetivo_mes = objetivo_base + deuda_acumulada
+        objetivo_mes = objetivo_vigente + deuda_acumulada
         neto_efectivo = total_efectivo - total_gastos
         entregado = max(min(neto_efectivo, objetivo_mes), 0)
         deficit_nuevo = max(objetivo_mes - neto_efectivo, 0)
@@ -143,24 +194,10 @@ def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base: floa
 
 
 def _resolver_pares_dobles(autos: list) -> dict:
-    """{nro: nro_pareja} a partir del número que aparezca en ANOTACIONES
-    (ej. 'doble con 35' → {34: 35}). Si ANOTACIONES no tiene un número
-    reconocible, esa cochera no entra en el diccionario y su pareja queda
-    sin marcar automáticamente al pagar la otra mitad del par."""
-    pares = {}
-    for c in autos:
-        anot = (c.anotaciones or '').upper()
-        if 'DOBLE' not in anot:
-            continue
-        match = re.search(r'\d+', anot)
-        if match:
-            pares[c.nro] = int(match.group())
-        else:
-            logger.warning(
-                f"PADRON: cochera {c.nro} marcada DOBLE en ANOTACIONES sin número de "
-                f"pareja reconocible ('{c.anotaciones}') — no se auto-completa el par."
-            )
-    return pares
+    """{nro: nro_pareja}, tomado directo del campo `pareja` que ya arma
+    dashboard/padron.py al expandir una fila de cochera doble combinada
+    (ej. NRO COCHERA "23 y 24" → dos CocheraPadron con pareja cruzada)."""
+    return {c.nro: c.pareja for c in autos if c.pareja}
 
 
 def _clasificar_cochera(raw) -> tuple:

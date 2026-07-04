@@ -9,10 +9,24 @@
 # Nombre vacío = cochera vacía/sin dueño. Fin de tabla = primera fila con
 # NRO COCHERA vacío (no se usa NOMBRE vacío como fin, porque nombre vacío
 # es un estado válido).
+#
+# Dos convenciones reales que no son obvias mirando solo el header:
+#   - Cochera doble: UNA fila con NRO COCHERA combinado ("23 y 24") y
+#     ANOTACIONES "DOBLE". Se expande a dos CocheraPadron (nro=23, nro=24)
+#     con pareja cruzada, para que pagar cualquiera de los dos números
+#     marque ambos como cobrados (ver estado_cocheras en metrics.py). El
+#     bot solo recibe UNO de los dos números al cargar el pago (nunca
+#     "DOBLE" genérico) — así identifica cuál par cobrar.
+#   - Espacio para motos dentro de la tabla de autos: NOMBRE "ESPACIO MOTO"
+#     o "ESPACIO MOTOS" (single o en una fila doble). Se excluye del todo
+#     del conteo de autos — no cuenta como ocupada ni como pendiente. Las
+#     motos reales ya se trackean aparte en la tabla H1:I24.
 
 import logging
+import re
 import unicodedata
 from dataclasses import dataclass
+from typing import Optional
 
 import gspread
 
@@ -24,6 +38,9 @@ PADRON_AUTOS_RANGE = 'A1:D130'
 PADRON_MOTOS_RANGE = 'H1:I24'
 PADRON_AUTOS_HEADER = ['NRO COCHERA', 'NOMBRE', 'PLANTA', 'ANOTACIONES']
 PADRON_MOTOS_HEADER = ['NRO COCHERA', 'NOMBRE']
+
+_COCHERA_DOBLE_RE = re.compile(r'^(\d+)\s*Y\s*(\d+)$')
+_ESPACIO_MOTO_RE = re.compile(r'^ESPACIO\s+MOTOS?$')
 
 
 class PadronLayoutError(Exception):
@@ -37,6 +54,7 @@ class CocheraPadron:
     nombre: str
     planta: str = ''
     anotaciones: str = ''
+    pareja: Optional[int] = None  # nro de la otra mitad, si es una cochera doble
 
     @property
     def ocupada(self) -> bool:
@@ -71,18 +89,26 @@ def _parse_tabla(filas: list, header_esperado: list, tabla: str) -> list:
         nro_raw = (fila[0] if len(fila) > 0 else '').strip()
         if not nro_raw:
             break  # fin de la tabla
+
+        nombre = (fila[1] if len(fila) > 1 else '').strip()
+        planta = fila[2].strip() if tabla == 'autos' and len(fila) > 2 else ''
+        anotaciones = fila[3].strip() if tabla == 'autos' and len(fila) > 3 else ''
+
+        if _ESPACIO_MOTO_RE.match(nombre.upper()):
+            continue  # espacio de motos dentro de la tabla de autos, no cuenta
+
+        doble = _COCHERA_DOBLE_RE.match(nro_raw.upper())
+        if doble:
+            n1, n2 = int(doble.group(1)), int(doble.group(2))
+            resultado.append(CocheraPadron(tabla=tabla, nro=n1, nombre=nombre, planta=planta, anotaciones=anotaciones, pareja=n2))
+            resultado.append(CocheraPadron(tabla=tabla, nro=n2, nombre=nombre, planta=planta, anotaciones=anotaciones, pareja=n1))
+            continue
+
         if not nro_raw.isdigit():
             logger.warning(f"PADRON/{tabla}: NRO COCHERA no numérico '{nro_raw}', se ignora la fila.")
             continue
 
-        nombre = (fila[1] if len(fila) > 1 else '').strip()
-        resultado.append(CocheraPadron(
-            tabla=tabla,
-            nro=int(nro_raw),
-            nombre=nombre,
-            planta=(fila[2].strip() if tabla == 'autos' and len(fila) > 2 else ''),
-            anotaciones=(fila[3].strip() if tabla == 'autos' and len(fila) > 3 else ''),
-        ))
+        resultado.append(CocheraPadron(tabla=tabla, nro=int(nro_raw), nombre=nombre, planta=planta, anotaciones=anotaciones))
     return resultado
 
 
