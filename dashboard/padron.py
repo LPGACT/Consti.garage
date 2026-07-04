@@ -109,6 +109,16 @@ def _parse_tabla(filas: list, header_esperado: list, tabla: str) -> list:
             continue
 
         resultado.append(CocheraPadron(tabla=tabla, nro=int(nro_raw), nombre=nombre, planta=planta, anotaciones=anotaciones))
+
+    vistos = set()
+    for c in resultado:
+        if c.nro in vistos:
+            logger.warning(
+                f"PADRON/{tabla}: NRO COCHERA {c.nro} aparece más de una vez — "
+                f"revisar filas duplicadas en la hoja PADRON."
+            )
+        vistos.add(c.nro)
+
     return resultado
 
 

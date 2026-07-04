@@ -169,6 +169,14 @@ button { font-family: inherit; }
 .tab-item .badge-count { position: absolute; top: 2px; right: 8px; }
 .tab-item { position: relative; }
 
+.loading-indicator {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 14px;
+  margin-bottom: var(--gap);
+}
+
 .error-banner {
   display: flex;
   align-items: center;

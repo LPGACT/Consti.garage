@@ -54,7 +54,7 @@ function mostrarApp() {
   document.getElementById('app').classList.remove('hidden');
 }
 
-document.getElementById('login-btn').addEventListener('click', async () => {
+async function intentarLogin() {
   const password = document.getElementById('password').value;
   const loginError = document.getElementById('login-error');
   loginError.textContent = '';
@@ -73,6 +73,14 @@ document.getElementById('login-btn').addEventListener('click', async () => {
     await init();
   } catch (e) {
     loginError.textContent = 'No pude conectar con el servidor.';
+  }
+}
+
+document.getElementById('login-btn').addEventListener('click', intentarLogin);
+document.getElementById('password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    intentarLogin();
   }
 });
 
@@ -134,12 +142,31 @@ function tituloMesActual() {
   return actual ? actual.titulo : null;
 }
 
-function mostrarError() {
+function mostrarError(mensaje) {
+  document.getElementById('error-banner-texto').textContent =
+    mensaje || 'No se pudo cargar. Revisá tu conexión.';
   document.getElementById('error-banner').classList.remove('hidden');
 }
 
 function ocultarError() {
   document.getElementById('error-banner').classList.add('hidden');
+}
+
+function mensajeDeError(e) {
+  const match = /→ (\d+)$/.exec(e.message);
+  if (!match) return 'No pude conectar con el servidor. Revisá tu conexión.';
+  const status = Number(match[1]);
+  if (status === 404) return 'No hay datos cargados para este mes todavía.';
+  if (status >= 500) return 'Error del servidor. Probá de nuevo en un momento.';
+  return 'No se pudo cargar. Intentá de nuevo.';
+}
+
+function mostrarCargando() {
+  document.getElementById('loading-indicator').classList.remove('hidden');
+}
+
+function ocultarCargando() {
+  document.getElementById('loading-indicator').classList.add('hidden');
 }
 
 document.getElementById('error-retry').addEventListener('click', () => {
@@ -160,6 +187,8 @@ async function cargarPaginaActual() {
   const titulo = tituloMesActual();
   if (!titulo) return;
 
+  mostrarCargando();
+  ocultarError();
   try {
     if (paginaActual === 'resumen') {
       const data = await fetchJSON(`/api/dashboard?mes=${mesQuery()}`);
@@ -179,7 +208,9 @@ async function cargarPaginaActual() {
     ocultarError();
   } catch (e) {
     if (e.message === '401') return; // ya se mostró la pantalla de login
-    mostrarError();
+    mostrarError(mensajeDeError(e));
+  } finally {
+    ocultarCargando();
   }
 }
 
@@ -220,6 +251,17 @@ function renderResumen(data) {
   actualizarBadgeCocheras(data.cocheras);
 }
 
+// Crea un elemento con texto plano (nunca HTML) — los datos que renderizamos
+// vienen de un Google Sheet que el dueño edita a mano sin sanitizar, así que
+// nunca deben insertarse como innerHTML (evita XSS si una celda tuviera un
+// tag <script> u otro HTML).
+function crearEl(tag, className, texto) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (texto !== undefined) el.textContent = texto;
+  return el;
+}
+
 // ── Ingresos ─────────────────────────────────────────────────────────────
 function renderIngresos() {
   const datos = ingresosDelMes;
@@ -242,15 +284,18 @@ function renderIngresos() {
     return;
   }
   filtrados.forEach((r) => {
-    const div = document.createElement('div');
-    div.className = 'lista-item';
-    div.innerHTML = `
-      <span class="info">
-        <span class="titulo">${r.nombre} — Cochera ${r.cochera}</span>
-        <span class="subtitulo">${r.fecha} · <span class="tag tag-tipo">${r.tipo_pago}</span></span>
-      </span>
-      <span class="monto">${r.monto_fmt}</span>
-    `;
+    const div = crearEl('div', 'lista-item');
+
+    const info = crearEl('span', 'info');
+    info.appendChild(crearEl('span', 'titulo', `${r.nombre} — Cochera ${r.cochera}`));
+
+    const subtitulo = crearEl('span', 'subtitulo');
+    subtitulo.append(`${r.fecha} · `);
+    subtitulo.appendChild(crearEl('span', 'tag tag-tipo', r.tipo_pago));
+    info.appendChild(subtitulo);
+
+    div.appendChild(info);
+    div.appendChild(crearEl('span', 'monto', r.monto_fmt));
     cont.appendChild(div);
   });
 }
@@ -285,15 +330,14 @@ function renderGastos() {
     return;
   }
   filtrados.forEach((g) => {
-    const div = document.createElement('div');
-    div.className = 'lista-item';
-    div.innerHTML = `
-      <span class="info">
-        <span class="titulo">${g.categoria}</span>
-        <span class="subtitulo">${g.fecha} · ${g.descripcion}</span>
-      </span>
-      <span class="monto">${g.monto_fmt}</span>
-    `;
+    const div = crearEl('div', 'lista-item');
+
+    const info = crearEl('span', 'info');
+    info.appendChild(crearEl('span', 'titulo', g.categoria));
+    info.appendChild(crearEl('span', 'subtitulo', `${g.fecha} · ${g.descripcion}`));
+
+    div.appendChild(info);
+    div.appendChild(crearEl('span', 'monto', g.monto_fmt));
     cont.appendChild(div);
   });
 }
@@ -336,16 +380,21 @@ function renderCocheras() {
     return;
   }
   filtradas.forEach((c) => {
-    const div = document.createElement('div');
-    div.className = 'lista-item';
+    const div = crearEl('div', 'lista-item');
     const nombre = c.nombre || (c.vacia ? '(vacía)' : '(sin nombre)');
-    div.innerHTML = `
-      <span class="info">
-        <span class="titulo">${c.nro} — ${nombre}</span>
-        <span class="subtitulo"><span class="tag tag-tipo">${c.tipo}</span></span>
-      </span>
-      <span class="tag ${c.cobrada ? 'tag-cobrada' : 'tag-pendiente'}">${c.cobrada ? 'Cobrada' : 'Pendiente'}</span>
-    `;
+
+    const info = crearEl('span', 'info');
+    info.appendChild(crearEl('span', 'titulo', `${c.nro} — ${nombre}`));
+    const subtitulo = crearEl('span', 'subtitulo');
+    subtitulo.appendChild(crearEl('span', 'tag tag-tipo', c.tipo));
+    info.appendChild(subtitulo);
+
+    div.appendChild(info);
+    div.appendChild(crearEl(
+      'span',
+      `tag ${c.cobrada ? 'tag-cobrada' : 'tag-pendiente'}`,
+      c.cobrada ? 'Cobrada' : 'Pendiente'
+    ));
     cont.appendChild(div);
   });
 }

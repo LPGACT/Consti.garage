@@ -39,10 +39,26 @@ def _parse_float(value) -> float:
 
 
 def _parse_monto_texto(value: str) -> Optional[float]:
-    """Parsea montos con formato de celda tipo '$9,800,000.00'."""
-    limpio = re.sub(r'[^\d.]', '', str(value).replace(',', ''))
-    if not limpio:
+    """Parsea montos con formato de celda, tanto '$9,800,000.00' (miles con
+    coma, decimal con punto) como '$9.800.000,00' o '$9.800.000' (convención
+    argentina, miles con punto). El último separador (. o ,) se interpreta
+    como decimal solo si le siguen 1 o 2 dígitos; si le siguen 3, es un
+    separador de miles más (ej. '9.800.000' → 9800000, no 9.800)."""
+    texto = re.sub(r'[^\d.,]', '', str(value))
+    if not texto:
         return None
+
+    ultimo = max(texto.rfind('.'), texto.rfind(','))
+    if ultimo == -1:
+        limpio = texto
+    else:
+        parte_decimal = texto[ultimo + 1:]
+        if len(parte_decimal) in (1, 2):
+            entero = re.sub(r'[.,]', '', texto[:ultimo])
+            limpio = f'{entero}.{parte_decimal}' if entero else f'0.{parte_decimal}'
+        else:
+            limpio = re.sub(r'[.,]', '', texto)
+
     try:
         return float(limpio)
     except ValueError:

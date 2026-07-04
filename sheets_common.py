@@ -44,9 +44,10 @@ def build_gspread_client() -> gspread.Client:
 
 
 def format_pesos(amount: float) -> str:
-    """Formatea en pesos argentinos: $140.000,00"""
-    s = f"{amount:,.2f}"                                     # "140,000.00"
-    return "$" + s.replace(',', 'X').replace('.', ',').replace('X', '.')
+    """Formatea en pesos argentinos: $140.000,00 (o -$140.000,00 si es negativo)."""
+    signo = '-' if amount < 0 else ''
+    s = f"{abs(amount):,.2f}"                                 # "140,000.00"
+    return f"{signo}$" + s.replace(',', 'X').replace('.', ',').replace('X', '.')
 
 
 def mes_sheet_title(mes: str, year: Optional[int] = None) -> str:

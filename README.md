@@ -90,7 +90,7 @@ Si ya tenías el bot corriendo antes del dashboard, hacé esto en orden en la co
 6. Poné cualquier nombre → hacé clic en **"Done"**
 7. Hacé clic en la cuenta de servicio que acabás de crear
 8. Andá a la pestaña **"Keys"** → **"Add Key"** → **"JSON"**
-9. Se descarga un archivo `credentials.json` → guardalo en la carpeta del proyecto
+9. Se descarga un archivo `credentials.json` → renombralo a `credentials.json` si no se llama así y guardalo en `~/secrets/` (`C:\Users\TU_USUARIO\secrets\` en Windows) — **no** en la carpeta del proyecto, para que no quede sincronizado por git/OneDrive junto con el código
 
 ### 3c. Darle acceso al Sheet
 1. Abrí el archivo `credentials.json` descargado
@@ -107,7 +107,7 @@ Si ya tenías el bot corriendo antes del dashboard, hacé esto en orden en la co
 mkdir bot-estacionamiento
 cd bot-estacionamiento
 
-# 2. Copiar bot.py, requirements.txt, .env.example y credentials.json acá
+# 2. Copiar bot.py, requirements.txt y .env.example acá (credentials.json NO va acá, ver Paso 3b)
 
 # 3. Crear entorno virtual e instalar dependencias
 python -m venv venv
@@ -116,10 +116,13 @@ source venv/bin/activate      # Mac/Linux
 
 pip install -r requirements.txt
 
-# 4. Crear el .env con tus datos
-cp .env.example .env
-# Editá .env con tu editor de texto y completá todos los campos
+# 4. Crear el .env con tus datos, en ~/secrets/ (no en la carpeta del proyecto)
+mkdir -p ~/secrets
+cp .env.example ~/secrets/.env
+# Editá ~/secrets/.env con tu editor de texto y completá todos los campos
 ```
+
+> El bot y el dashboard leen `~/secrets/.env` y `~/secrets/credentials.json` (no la carpeta del proyecto) — es intencional, para que un secreto real nunca quede en una carpeta sincronizada por git o por OneDrive/Drive. En Render no aplica: ahí las variables se cargan directo en el dashboard del servicio (Paso 5b).
 
 ---
 

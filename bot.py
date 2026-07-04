@@ -22,7 +22,7 @@ from telegram.ext import (
 from PIL import Image
 
 from sheets_common import (
-    build_gspread_client, format_pesos, ING_BRUTOS_PCT,
+    build_gspread_client, format_pesos, ING_BRUTOS_PCT, MESES_ORDEN,
     HEADER_ROW, GASTOS_HEADER_ROW, PADRON_SHEET_TITLE,
     mes_sheet_title, gastos_sheet_title,
 )
@@ -175,14 +175,23 @@ COCHERAS_ESPECIALES = {'MOTO', 'DOBLE'}
 
 
 def parse_cochera(raw: str) -> Optional[object]:
-    """Devuelve el número de cochera (int) o 'MOTO'/'DOBLE', o None si no es válido."""
-    raw_upper = raw.strip().upper()
+    """Devuelve el número de cochera (int) o 'MOTO'/'DOBLE', o None si no es válido.
+    Exige que el campo entero sea el número (no que lo contenga) — así
+    "5 IB" sin la coma antes de IB se rechaza en vez de leerse como cochera 5."""
+    raw = raw.strip()
+    raw_upper = raw.upper()
     if raw_upper in COCHERAS_ESPECIALES:
         return raw_upper
-    match = re.search(r'\d+', raw)
-    if not match:
+    if not re.fullmatch(r'\d+', raw):
         return None
-    return int(match.group())
+    return int(raw)
+
+
+def parse_mes(raw: str) -> Optional[str]:
+    """Valida que sea un mes real (ENERO..DICIEMBRE). Un typo de mes sin
+    validar crearía una hoja nueva fragmentada en el Sheet sin avisar a nadie."""
+    mes = raw.strip().upper()
+    return mes if mes in MESES_ORDEN else None
 
 
 def parse_monto(raw: str) -> Optional[float]:
@@ -207,10 +216,14 @@ def parse_caption(caption: str) -> Optional[dict]:
     if len(parts) not in (3, 4):
         return None
 
-    nombre, cochera_raw, mes = parts[0], parts[1], parts[2]
+    nombre, cochera_raw, mes_raw = parts[0], parts[1], parts[2]
     ing_brutos = len(parts) == 4 and parts[3].upper() == 'IB'
 
-    if not nombre or not mes:
+    if not nombre:
+        return None
+
+    mes = parse_mes(mes_raw)
+    if mes is None:
         return None
 
     cochera = parse_cochera(cochera_raw)
@@ -220,7 +233,7 @@ def parse_caption(caption: str) -> Optional[dict]:
     return {
         'nombre':     nombre,
         'cochera':    cochera,
-        'mes':        mes.upper(),
+        'mes':        mes,
         'ing_brutos': ing_brutos
     }
 
@@ -240,9 +253,11 @@ def parse_efectivo_message(text: str) -> Optional[dict]:
         return None
 
     header = [p.strip() for p in lines[0].split(',')]
-    if len(header) < 2 or header[0].upper() != 'EFECTIVO' or not header[1]:
+    if len(header) < 2 or header[0].upper() != 'EFECTIVO':
         return None
-    mes = header[1].upper()
+    mes = parse_mes(header[1])
+    if mes is None:
+        return None
 
     filas = []
     errores = []
@@ -282,8 +297,12 @@ def parse_gastos_message(text: str) -> Optional[dict]:
     if len(parts) != 5 or parts[0].upper() != 'GASTOS':
         return None
 
-    _, mes, categoria, monto_raw, descripcion = parts
-    if not mes or not categoria or not descripcion:
+    _, mes_raw, categoria, monto_raw, descripcion = parts
+    if not categoria or not descripcion:
+        return None
+
+    mes = parse_mes(mes_raw)
+    if mes is None:
         return None
 
     monto = parse_monto(monto_raw)
@@ -291,7 +310,7 @@ def parse_gastos_message(text: str) -> Optional[dict]:
         return None
 
     return {
-        'mes':         mes.upper(),
+        'mes':         mes,
         'categoria':   categoria.upper(),
         'monto':       monto,
         'descripcion': descripcion
