@@ -200,7 +200,7 @@ button { font-family: inherit; }
   background: var(--glass);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  padding: 24px 24px 100px;
+  padding: calc(24px + env(safe-area-inset-top)) 24px 100px;
 }
 
 .topbar {
@@ -429,7 +429,7 @@ button { font-family: inherit; }
 @media (max-width: 768px) {
   .shell { flex-direction: column; min-height: auto; }
   .sidebar { display: none; }
-  .main { padding: 18px 16px 90px; border-radius: 0; }
+  .main { padding: calc(18px + env(safe-area-inset-top)) 16px 90px; border-radius: 0; }
   .bottom-tabs { display: flex; }
   .hero .value { font-size: 32px; }
   .topbar h1 { font-size: 19px; }
