@@ -2,9 +2,17 @@
 #
 # Layout real (confirmado contra el Sheet del usuario):
 #
-#   A1:D130  autos/dobles — NRO COCHERA | NOMBRE | PLANTA | ANOTACIONES
+#   A1:D250  autos/dobles — NRO COCHERA | NOMBRE | PLANTA | ANOTACIONES
 #            (no hay columna MONTO — el precio no se trackea por cochera acá)
-#   H1:I24   motos        — NRO COCHERA | NOMBRE
+#   H1:I60   motos        — NRO COCHERA | NOMBRE
+#
+# Los rangos tienen bastante margen de sobra a propósito: el fin real de
+# cada tabla lo determina la primera fila con NRO COCHERA vacío, no el
+# límite del rango. Un rango justo (ej. exactamente el tamaño de la tabla
+# actual) se rompe en silencio el día que alguien inserte una fila en el
+# medio de la tabla en vez de escribir sobre una fila vacía — todo lo que
+# quede debajo se corre una fila y puede caer fuera del rango sin ningún
+# error, solo desaparece del padrón (ya pasó una vez con esta tabla).
 #
 # Nombre vacío = cochera vacía/sin dueño. Fin de tabla = primera fila con
 # NRO COCHERA vacío (no se usa NOMBRE vacío como fin, porque nombre vacío
@@ -34,8 +42,8 @@ from sheets_common import PADRON_SHEET_TITLE
 
 logger = logging.getLogger(__name__)
 
-PADRON_AUTOS_RANGE = 'A1:D130'
-PADRON_MOTOS_RANGE = 'H1:I24'
+PADRON_AUTOS_RANGE = 'A1:D250'
+PADRON_MOTOS_RANGE = 'H1:I60'
 PADRON_AUTOS_HEADER = ['NRO COCHERA', 'NOMBRE', 'PLANTA', 'ANOTACIONES']
 PADRON_MOTOS_HEADER = ['NRO COCHERA', 'NOMBRE']
 
