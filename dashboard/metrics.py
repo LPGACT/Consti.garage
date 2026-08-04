@@ -98,18 +98,24 @@ def leer_ingresos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
     except gspread.WorksheetNotFound:
         return []
 
-    registros = ws.get_all_records(value_render_option='UNFORMATTED_VALUE')
+    # Se lee por POSICIÓN de columna (A-F), no por nombre de header vía
+    # get_all_records: la fila 1 de esta hoja también tiene el resumen
+    # (G1:H3) al lado de la tabla, y una celda de encabezado borrada por
+    # error ahí (o cualquiera de las columnas vacías) rompe get_all_records
+    # entero. Leyendo por posición no importa qué diga (o no diga) la fila 1.
+    filas = ws.get('A2:F', value_render_option='UNFORMATTED_VALUE')
     resultado = []
-    for r in registros:
-        if not str(r.get('Fecha', '')).strip():
+    for fila in filas:
+        fecha = fila[0] if len(fila) > 0 else ''
+        if not str(fecha).strip():
             continue
         resultado.append({
-            'fecha': r.get('Fecha'),
-            'cochera': r.get('Cochera'),
-            'nombre': str(r.get('Nombre', '')).strip(),
-            'monto': _parse_float(r.get('Monto')),
-            'ing_brutos': _parse_float(r.get('Ing. Brutos (2.5%)')),
-            'tipo_pago': str(r.get('Tipo de Pago', '')).strip(),
+            'fecha': fecha,
+            'cochera': fila[1] if len(fila) > 1 else '',
+            'nombre': str(fila[2]).strip() if len(fila) > 2 else '',
+            'monto': _parse_float(fila[3] if len(fila) > 3 else ''),
+            'ing_brutos': _parse_float(fila[4] if len(fila) > 4 else ''),
+            'tipo_pago': str(fila[5]).strip() if len(fila) > 5 else '',
         })
     return resultado
 
@@ -122,16 +128,20 @@ def leer_gastos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
     except gspread.WorksheetNotFound:
         return []
 
-    registros = ws.get_all_records(value_render_option='UNFORMATTED_VALUE')
+    # Mismo motivo que en leer_ingresos: esta hoja tiene el resumen (F1:G3)
+    # al lado de la tabla en la misma fila 1 — se lee por posición, no por
+    # nombre de header.
+    filas = ws.get('A2:D', value_render_option='UNFORMATTED_VALUE')
     resultado = []
-    for r in registros:
-        if not str(r.get('Fecha', '')).strip():
+    for fila in filas:
+        fecha = fila[0] if len(fila) > 0 else ''
+        if not str(fecha).strip():
             continue
         resultado.append({
-            'fecha': r.get('Fecha'),
-            'categoria': str(r.get('Categoría', '')).strip(),
-            'monto': _parse_float(r.get('Monto')),
-            'descripcion': str(r.get('Descripción', '')).strip(),
+            'fecha': fecha,
+            'categoria': str(fila[1]).strip() if len(fila) > 1 else '',
+            'monto': _parse_float(fila[2] if len(fila) > 2 else ''),
+            'descripcion': str(fila[3]).strip() if len(fila) > 3 else '',
         })
     return resultado
 
