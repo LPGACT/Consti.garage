@@ -266,18 +266,25 @@ def _resolver_pares_dobles(autos: list) -> dict:
 
 def _clasificar_cochera(raw) -> tuple:
     """Devuelve ('nro', int) | ('moto', None) | ('doble_generico', None) |
-    ('externo', texto) | ('desconocido', None).
+    ('multi', [str, ...]) | ('externo', texto) | ('desconocido', None).
     Necesario porque el valor de la columna Cochera puede volver de Sheets
     como int, float (si Sheets lo guardó como número) o str ('MOTO'/'DOBLE').
     'externo' es un ingreso real que no corresponde a ninguna cochera de
     este padrón (ej. un cliente que paga por transferencia desde otra
     playa) — se identifica por tener texto libre que no es ninguno de los
-    valores especiales conocidos. No es un error de carga, no se loguea."""
+    valores especiales conocidos. No es un error de carga, no se loguea.
+    'multi' es un pago que cubre varias cocheras en una sola fila (ej.
+    '5 y 12', un cliente con 2 espacios que paga todo junto con una sola
+    transferencia) — cada parte se vuelve a clasificar individualmente en
+    estado_cocheras, mismo estilo que ya usa PADRON para las dobles."""
     if isinstance(raw, (int, float)):
         return ('nro', int(raw))
     texto = str(raw).strip().upper()
     if not texto:
         return ('desconocido', None)
+    partes = re.split(r'\s+Y\s+', texto)
+    if len(partes) > 1:
+        return ('multi', partes)
     if texto == 'MOTO':
         return ('moto', None)
     if texto == 'DOBLE':
@@ -297,20 +304,29 @@ def estado_cocheras(ingresos: list, padron: dict) -> dict:
     cobrados_moto_nombre = set()
     sin_identificar = 0
 
-    for fila in ingresos:
-        tipo, nro = _clasificar_cochera(fila['cochera'])
+    def _registrar(tipo, valor, fila):
+        nonlocal sin_identificar
         if tipo == 'moto':
             cobrados_moto_nombre.add(normaliza_nombre(fila['nombre']))
         elif tipo == 'doble_generico':
             sin_identificar += 1
         elif tipo == 'nro':
-            cobrados_nro.add(nro)
-            if nro in pares:
-                cobrados_nro.add(pares[nro])
+            cobrados_nro.add(valor)
+            if valor in pares:
+                cobrados_nro.add(pares[valor])
         elif tipo == 'externo':
             pass  # ingreso legítimo, no corresponde a ninguna cochera de este padrón
         else:
             logger.warning(f"Cochera no reconocida en fila de ingresos: {fila!r}")
+
+    for fila in ingresos:
+        tipo, nro = _clasificar_cochera(fila['cochera'])
+        if tipo == 'multi':
+            for parte in nro:
+                sub_tipo, sub_valor = _clasificar_cochera(parte)
+                _registrar(sub_tipo, sub_valor, fila)
+        else:
+            _registrar(tipo, nro, fila)
 
     todas = (
         [

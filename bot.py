@@ -244,6 +244,22 @@ def parse_cochera(raw: str) -> Optional[object]:
     return int(raw)
 
 
+def parse_cocheras(raw: str) -> Optional[list]:
+    """Una o más cocheras en un mismo pago (ej. un cliente con 2 cocheras que
+    paga todo junto con una sola transferencia). Se escriben separadas por
+    ';' — '5;12;23' o '5;MOTO' — porque la coma ya es el separador entre
+    Nombre/Cochera/Mes. Devuelve la lista de valores validados (cada uno
+    pasado por parse_cochera), o None si alguno no es válido."""
+    tokens = [t.strip() for t in raw.split(';')]
+    valores = []
+    for t in tokens:
+        v = parse_cochera(t)
+        if v is None:
+            return None
+        valores.append(v)
+    return valores if valores else None
+
+
 def parse_mes(raw: str) -> Optional[str]:
     """Valida que sea un mes real (ENERO..DICIEMBRE). Un typo de mes sin
     validar crearía una hoja nueva fragmentada en el Sheet sin avisar a nadie."""
@@ -268,12 +284,14 @@ def parse_caption(caption: str) -> Optional[dict]:
       Juan García, DOBLE, JUNIO      → doble, sin ing. brutos
       Juan García, 5, JUNIO, IB      → cochera numerada, con ing. brutos
       Juan García, MOTO, JUNIO, IB   → moto, con ing. brutos
+      Juan García, 5;12;23, JUNIO    → un pago cubre varias cocheras (se
+                                        guarda en el Sheet como "5 y 12 y 23")
     """
     parts = [p.strip() for p in caption.split(',')]
     if len(parts) not in (3, 4):
         return None
 
-    nombre, cochera_raw, mes_raw = parts[0], parts[1], parts[2]
+    nombre, cocheras_raw, mes_raw = parts[0], parts[1], parts[2]
     ing_brutos = len(parts) == 4 and parts[3].upper() == 'IB'
 
     if not nombre:
@@ -283,9 +301,14 @@ def parse_caption(caption: str) -> Optional[dict]:
     if mes is None:
         return None
 
-    cochera = parse_cochera(cochera_raw)
-    if cochera is None:
+    cocheras = parse_cocheras(cocheras_raw)
+    if cocheras is None:
         return None
+
+    # Una sola cochera se guarda tal cual (int, o 'MOTO'/'DOBLE') para no
+    # tocar el formato ya usado en filas existentes. Varias se guardan
+    # unidas con ' y ', mismo estilo que ya usa PADRON para las dobles.
+    cochera = cocheras[0] if len(cocheras) == 1 else ' y '.join(str(c) for c in cocheras)
 
     return {
         'nombre':     nombre,
@@ -400,7 +423,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Transferencia / Mercado Pago* — mandame la imagen o PDF del comprobante con el caption:\n"
         "`Nombre, Cochera, Mes`\n"
         "`Nombre, Cochera, Mes, IB` ← con ing. brutos\n"
-        "Ejemplo: `Juan García, 5, JUNIO`\n\n"
+        "`Nombre, Cochera;Cochera;Cochera, Mes` ← una transferencia cubre varias cocheras\n"
+        "Ejemplo: `Juan García, 5, JUNIO`\n"
+        "Ejemplo varias cocheras: `José, 1;2, JUNIO`\n\n"
         "*Efectivo* — mensaje de texto, una línea por cochera:\n"
         "`EFECTIVO, Mes`\n"
         "`Cochera, Nombre, Monto`\n"
@@ -432,7 +457,8 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await message.reply_text(
             "❌ *Formato incorrecto*\n\n"
             "Sin ing. brutos: `Nombre, Cochera, Mes`\n"
-            "Con ing. brutos: `Nombre, Cochera, Mes, IB`\n\n"
+            "Con ing. brutos: `Nombre, Cochera, Mes, IB`\n"
+            "Varias cocheras: `Nombre, Cochera;Cochera, Mes`\n\n"
             "Ejemplo: `Juan García, 5, JUNIO, IB`",
             parse_mode='Markdown'
         )
