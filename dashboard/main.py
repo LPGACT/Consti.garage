@@ -11,8 +11,15 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+
+# Tiene que correr ANTES de importar dashboard.auth (y cualquier otro módulo
+# que lea una env var a nivel de import, ej. DASHBOARD_PASSWORD): un import
+# antes de este load_dotenv() capturaba '' para siempre, aunque os.environ
+# se corrigiera después — rompía el login local por completo.
+load_dotenv(os.path.join(os.path.expanduser('~'), 'secrets', '.env'))
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -20,9 +27,7 @@ from sheets_common import build_gspread_client, format_pesos, mes_sheet_title, g
 from dashboard.auth import require_auth, DASHBOARD_PASSWORD
 from dashboard.cache import cached
 from dashboard.metrics import calcular_serie_mensual, leer_gastos, estado_cocheras, listar_meses_ingresos
-from dashboard.padron import leer_padron
-
-load_dotenv(os.path.join(os.path.expanduser('~'), 'secrets', '.env'))
+from dashboard.padron import leer_padron, PadronLayoutError
 
 # Modo demo: sirve datos de ejemplo en vez de pegarle a Google Sheets, para
 # poder correr el dashboard sin credenciales reales (revisión visual local).
@@ -39,6 +44,15 @@ STATIC_DIR = Path(__file__).parent / 'static'
 gc = None if DEMO else build_gspread_client()
 
 app = FastAPI(title="Consti.garage — Dashboard")
+
+
+@app.exception_handler(PadronLayoutError)
+async def _padron_layout_error_handler(request: Request, exc: PadronLayoutError):
+    # Antes esto tiraba un 500 crudo sin ningún mensaje (pasó de verdad: una
+    # celda de encabezado de PADRON borrada por error tumbó todo el dashboard
+    # sin ninguna pista). Ahora explica exactamente qué fila/columna no
+    # matchea, para poder arreglarlo en el Sheet sin tener que adivinar.
+    return JSONResponse(status_code=502, content={'detail': f"Problema de formato en la hoja PADRON: {exc}"})
 
 _CAMPOS_MONETARIOS = [
     'ingreso_bruto', 'ingreso_neto', 'total_transferencias', 'total_efectivo',

@@ -40,7 +40,20 @@ async function fetchJSON(url, opts = {}) {
     mostrarLogin();
     throw new Error('401');
   }
-  if (!resp.ok) throw new Error(`${url} → ${resp.status}`);
+  if (!resp.ok) {
+    // El backend manda {detail: "..."} explicando qué pasó (ej. un problema
+    // de formato en el Sheet) — se guarda para mostrarlo tal cual en vez de
+    // un mensaje genérico que no dice nada útil.
+    let detail = null;
+    try {
+      const body = await resp.json();
+      detail = body && body.detail;
+    } catch (e) { /* la respuesta de error no era JSON, sin detalle */ }
+    const err = new Error(`${url} → ${resp.status}`);
+    err.status = resp.status;
+    err.detail = detail;
+    throw err;
+  }
   return resp.json();
 }
 
@@ -153,6 +166,7 @@ function ocultarError() {
 }
 
 function mensajeDeError(e) {
+  if (e.detail) return e.detail;
   const match = /→ (\d+)$/.exec(e.message);
   if (!match) return 'No pude conectar con el servidor. Revisá tu conexión.';
   const status = Number(match[1]);
@@ -183,34 +197,47 @@ function actualizarBadgeCocheras(cocheras) {
   });
 }
 
+// Número de secuencia de la carga en curso: si el usuario cambia de mes o de
+// página antes de que vuelva una respuesta vieja, esa respuesta se descarta
+// en vez de pisar la pantalla con datos de otro mes bajo el título nuevo.
+let cargaSeq = 0;
+
 async function cargarPaginaActual() {
   const titulo = tituloMesActual();
   if (!titulo) return;
 
+  const miSeq = ++cargaSeq;
   mostrarCargando();
   ocultarError();
   try {
     if (paginaActual === 'resumen') {
       const data = await fetchJSON(`/api/dashboard?mes=${mesQuery()}`);
+      if (miSeq !== cargaSeq) return;
       renderResumen(data);
     } else if (paginaActual === 'ingresos') {
-      ingresosDelMes = await fetchJSON(`/api/ingresos?mes=${mesQuery()}`);
+      const data = await fetchJSON(`/api/ingresos?mes=${mesQuery()}`);
+      if (miSeq !== cargaSeq) return;
+      ingresosDelMes = data;
       renderIngresos();
     } else if (paginaActual === 'gastos') {
-      gastosDelMes = await fetchJSON(`/api/gastos?mes=${mesQuery()}`);
+      const data = await fetchJSON(`/api/gastos?mes=${mesQuery()}`);
+      if (miSeq !== cargaSeq) return;
+      gastosDelMes = data;
       renderGastos();
     } else if (paginaActual === 'cocheras') {
       const data = await fetchJSON(`/api/dashboard?mes=${mesQuery()}`);
+      if (miSeq !== cargaSeq) return;
       cocherasDelMes = data.cocheras;
       actualizarBadgeCocheras(data.cocheras);
       renderCocheras();
     }
     ocultarError();
   } catch (e) {
+    if (miSeq !== cargaSeq) return; // ya hay una carga más nueva en curso, no pisarla
     if (e.message === '401') return; // ya se mostró la pantalla de login
     mostrarError(mensajeDeError(e));
   } finally {
-    ocultarCargando();
+    if (miSeq === cargaSeq) ocultarCargando();
   }
 }
 

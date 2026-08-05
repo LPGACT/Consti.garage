@@ -38,6 +38,22 @@ def _parse_float(value) -> float:
         return 0.0
 
 
+_TIPOS_PAGO_CONOCIDOS = {
+    'TRANSFERENCIA': 'Transferencia',
+    'MERCADO PAGO':  'Mercado Pago',
+    'EFECTIVO':      'Efectivo',
+}
+
+
+def _normaliza_tipo_pago(tipo_pago: str) -> Optional[str]:
+    """Forma canónica del tipo de pago (case/espacios insensible), o None si
+    no matchea ninguno de los tres conocidos. Antes la comparación era exacta
+    ('Transferencia' con T mayúscula nomás) — una fila cargada como
+    'TRANSFERENCIA' no caía en ningún bucket y esa plata desaparecía en
+    silencio de los totales."""
+    return _TIPOS_PAGO_CONOCIDOS.get(str(tipo_pago).strip().upper())
+
+
 def _parse_monto_texto(value: str) -> Optional[float]:
     """Parsea montos con formato de celda, tanto '$9,800,000.00' (miles con
     coma, decimal con punto) como '$9.800.000,00' o '$9.800.000' (convención
@@ -186,10 +202,22 @@ def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base_defau
 
         ingreso_bruto = sum(r['monto'] for r in ingresos)
         descuento_ib = sum(r['ing_brutos'] for r in ingresos)
-        total_transferencias = sum(
-            r['monto'] for r in ingresos if r['tipo_pago'] in ('Transferencia', 'Mercado Pago')
-        )
-        total_efectivo = sum(r['monto'] for r in ingresos if r['tipo_pago'] == 'Efectivo')
+
+        total_transferencias = 0.0
+        total_efectivo = 0.0
+        for r in ingresos:
+            tipo_canon = _normaliza_tipo_pago(r['tipo_pago'])
+            if tipo_canon in ('Transferencia', 'Mercado Pago'):
+                total_transferencias += r['monto']
+            elif tipo_canon == 'Efectivo':
+                total_efectivo += r['monto']
+            else:
+                logger.warning(
+                    f"{titulo}: Tipo de pago no reconocido '{r['tipo_pago']}' (cochera "
+                    f"{r['cochera']!r}, {r['nombre']!r}) — no se suma ni a transferencias "
+                    f"ni a efectivo. Revisar esa celda en el Sheet."
+                )
+
         total_gastos = sum(g['monto'] for g in gastos)
 
         objetivo_mes = objetivo_vigente + deuda_acumulada

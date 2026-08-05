@@ -38,12 +38,18 @@ GEMINI_API_KEY  = os.getenv('GEMINI_API_KEY')
 SHEETS_ID       = os.getenv('GOOGLE_SHEETS_ID')
 ALLOWED_USER_ID = int(os.getenv('ALLOWED_USER_ID', 0))
 WEBHOOK_URL     = os.getenv('WEBHOOK_URL', '')
+WEBHOOK_SECRET  = os.getenv('WEBHOOK_SECRET', '')
 PORT            = int(os.getenv('PORT', 8000))
 
 
+TZ_ARGENTINA = datetime.timezone(datetime.timedelta(hours=-3))
+
+
 def hoy() -> str:
-    """Fecha de hoy en formato DD/MM/YYYY, para registros sin comprobante (efectivo, gastos)."""
-    return datetime.date.today().strftime('%d/%m/%Y')
+    """Fecha de hoy en formato DD/MM/YYYY (hora Argentina, no la del servidor).
+    Render corre en UTC — sin este offset, cualquier carga entre las 21:00 y
+    las 23:59 hora Argentina quedaba fechada al día siguiente en el Sheet."""
+    return datetime.datetime.now(TZ_ARGENTINA).strftime('%d/%m/%Y')
 
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -71,7 +77,18 @@ Respondé ÚNICAMENTE con JSON válido, sin markdown, sin texto adicional:
 def extract_from_comprobante(file_path: str, mime_type: str) -> dict:
     """Usa Gemini Flash para extraer monto, tipo y fecha del comprobante."""
     if mime_type == 'application/pdf':
-        uploaded = genai.upload_file(file_path, mime_type='application/pdf')
+        try:
+            uploaded = genai.upload_file(file_path, mime_type='application/pdf')
+        except Exception as e:
+            # El error de subida de PDF de la librería de Gemini incluye la
+            # API key en la URL (?key=...) — nunca se debe reenviar tal cual
+            # al chat de Telegram. Se loguea completo acá (server-side, no
+            # llega al usuario) y se reemplaza por un mensaje genérico.
+            logger.error(f"Error subiendo PDF a Gemini: {e}")
+            raise RuntimeError(
+                "No pude subir el PDF a Gemini. Probá con una foto en su lugar, "
+                "o reintentá en unos minutos."
+            ) from None
         try:
             response = gemini.generate_content([GEMINI_PROMPT, uploaded])
         finally:
@@ -82,7 +99,34 @@ def extract_from_comprobante(file_path: str, mime_type: str) -> dict:
 
     text = response.text.strip()
     text = re.sub(r'```(?:json)?\n?|\n?```', '', text).strip()
-    return json.loads(text)
+    data = json.loads(text)
+
+    # Gemini a veces devuelve el monto como texto ("140000.00") en vez de
+    # número — se acepta cualquiera de las dos formas, siempre que sea
+    # convertible a número real; si no lo es, se rechaza con un error claro
+    # en vez de guardar un dato que rompe el =SUM() de la hoja en silencio.
+    try:
+        data['monto'] = float(data['monto'])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"monto inválido en la respuesta de Gemini: {data.get('monto')!r}") from None
+
+    return data
+
+
+async def responder_con_reintento(message, texto_principal: str, texto_fallback: str, **kwargs):
+    """Manda la confirmación con formato (Markdown); si falla (ej. un caracter
+    especial de Markdown en un nombre, un blip de red), reintenta con un
+    mensaje simple en texto plano — así el usuario siempre se entera de que
+    el dato ya se guardó, en vez de quedarse sin ninguna respuesta creyendo
+    que falló y recargando el mismo pago por las dudas."""
+    try:
+        await message.reply_text(texto_principal, **kwargs)
+    except Exception as e:
+        logger.error(f"Falló el mensaje de confirmación con formato, reintentando en texto plano: {e}")
+        try:
+            await message.reply_text(texto_fallback)
+        except Exception as e2:
+            logger.error(f"También falló el mensaje de confirmación de respaldo: {e2}")
 
 
 # ─── Google Sheets ────────────────────────────────────────────────────────────
@@ -425,13 +469,15 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ) if data['ing_brutos'] else ""
 
         await status.delete()
-        await message.reply_text(
+        await responder_con_reintento(
+            message,
             f"✅ *Registrado — {data['mes']}*\n\n"
             f"👤 {data['nombre']}\n"
             f"🅿️  Cochera {data['cochera']}\n"
             f"💰 Bruto: {format_pesos(monto)}{ib_line}\n"
             f"📅 {payment['fecha']}\n"
             f"💳 {payment['tipo_pago']}",
+            f"✅ Registrado — {data['mes']}: {data['nombre']}, cochera {data['cochera']}, {format_pesos(monto)}",
             parse_mode='Markdown'
         )
 
@@ -441,6 +487,15 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await message.reply_text(
             "❌ *No pude leer el comprobante*\n\n"
             "¿La imagen es clara? ¿Es un comprobante de pago?\n\n"
+            f"`{type(e).__name__}: {e}`",
+            parse_mode='Markdown'
+        )
+    except (ValueError, KeyError) as e:
+        logger.error(f"Dato inválido en la respuesta de Gemini: {e}")
+        await status.delete()
+        await message.reply_text(
+            "❌ *No pude leer el comprobante*\n\n"
+            "El monto que devolvió Gemini no es válido. ¿La imagen es clara?\n\n"
             f"`{type(e).__name__}: {e}`",
             parse_mode='Markdown'
         )
@@ -511,7 +566,11 @@ async def handle_efectivo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data['errores']:
             resumen += "\n\n⚠️ *Líneas no cargadas:*\n" + "\n".join(data['errores'])
 
-        await message.reply_text(resumen, parse_mode='Markdown')
+        await responder_con_reintento(
+            message, resumen,
+            f"✅ Efectivo cargado — {data['mes']}: {format_pesos(total)} ({len(data['filas'])} cocheras)",
+            parse_mode='Markdown'
+        )
 
     except gspread.exceptions.APIError as e:
         logger.error(f"Google Sheets APIError (efectivo): {e}")
@@ -544,11 +603,13 @@ async def handle_gastos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ws = get_or_create_gastos_sheet(data['mes'])
         ws.append_row([hoy(), data['categoria'], data['monto'], data['descripcion']], table_range='A1:D1')
 
-        await message.reply_text(
+        await responder_con_reintento(
+            message,
             f"✅ *Gasto registrado — {data['mes']}*\n\n"
             f"🏷️ {data['categoria']}\n"
             f"💸 {format_pesos(data['monto'])}\n"
             f"📝 {data['descripcion']}",
+            f"✅ Gasto registrado — {data['mes']}: {data['categoria']}, {format_pesos(data['monto'])}",
             parse_mode='Markdown'
         )
 
@@ -599,8 +660,10 @@ async def handle_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nombre_viejo = ws.cell(cell.row, col_nombre).value or '(vacía)'
         ws.update_cell(cell.row, col_nombre, data['nombre_nuevo'])
 
-        await message.reply_text(
+        await responder_con_reintento(
+            message,
             f"🔄 *Cochera {data['nro']}*\n{nombre_viejo} → {data['nombre_nuevo']}",
+            f"🔄 Cochera {data['nro']}: {nombre_viejo} -> {data['nombre_nuevo']}",
             parse_mode='Markdown'
         )
 
@@ -657,12 +720,19 @@ def main():
     ))
 
     if WEBHOOK_URL:
+        if not WEBHOOK_SECRET:
+            logger.warning(
+                "WEBHOOK_SECRET no está configurado — cualquiera que consiga la URL del "
+                "webhook puede mandar updates falsos sin pasar por Telegram. Configurá "
+                "WEBHOOK_SECRET en las variables de entorno."
+            )
         logger.info(f"Modo webhook → {WEBHOOK_URL}")
         app.run_webhook(
             listen='0.0.0.0',
             port=PORT,
             url_path='webhook',
-            webhook_url=f'{WEBHOOK_URL}/webhook'
+            webhook_url=f'{WEBHOOK_URL}/webhook',
+            secret_token=WEBHOOK_SECRET or None
         )
     else:
         logger.info("Modo polling (local)")

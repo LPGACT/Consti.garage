@@ -150,7 +150,8 @@ Si ves `Modo polling (local)` en la terminal, está funcionando.
 5. En **"Environment Variables"** agregá todas las variables del `.env`
 6. Para `GOOGLE_CREDENTIALS_JSON`: abrí el `credentials.json`, copiá **todo el contenido** y pegalo como valor de esa variable
 7. Para `WEBHOOK_URL`: pegá la URL que te da Render (ej: `https://tu-bot.onrender.com`)
-8. Hacé deploy
+8. Para `WEBHOOK_SECRET`: generá un valor random (ej. en una terminal: `python -c "import secrets; print(secrets.token_urlsafe(32))"`) y pegalo — sin esto, cualquiera que consiga la URL del webhook puede mandarle updates falsos al bot sin pasar por Telegram
+9. Hacé deploy
 
 > ⚠️ El tier gratuito de Render "duerme" después de 15 min sin actividad. Cuando mandás el primer mensaje tarda ~30 segundos en despertar. Para uso esporádico está bien. Si querés que sea instantáneo, el plan de $7/mes lo mantiene siempre activo.
 
