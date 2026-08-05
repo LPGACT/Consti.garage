@@ -1,18 +1,18 @@
-# dashboard/metrics.py — Fórmulas financieras del dashboard y arrastre de
-# deuda de rendición a socios mes a mes. Todo se deriva de las hojas de
-# ingresos/gastos que ya escribe bot.py — no hay ningún ledger nuevo que
-# mantener sincronizado.
+# dashboard/metrics.py — Fórmulas financieras del dashboard. Todo se deriva
+# de las hojas de ingresos/gastos que ya escribe bot.py — no hay ningún
+# ledger nuevo que mantener sincronizado.
 #
 # Reglas de negocio (cerradas con el dueño de la playa, no son supuestos):
-#   - La rendición a socios ($9.800.000, config. RENDICION_OBJETIVO_BASE)
+#   - La rendición a socios (config. RENDICION_OBJETIVO_BASE, por período)
 #     sale SOLO del efectivo, después de pagar los gastos con esa misma
 #     plata. Es fija, no depende de cuántas cocheras estén vacías.
-#   - Si el efectivo no alcanza, el faltante NO sale del bolsillo del dueño
-#     ese mes — se suma al objetivo del mes siguiente ("deuda heredada").
+#   - Cada mes es independiente: si el efectivo no alcanza para cubrir el
+#     objetivo, se entrega lo que haya y listo — el faltante NO se arrastra
+#     al objetivo del mes siguiente (antes sí se arrastraba; se sacó a
+#     pedido explícito del dueño).
 #   - Lo que gana el dueño = todo lo que le transfieren (Transferencia +
 #     Mercado Pago, nunca se reparte) + lo que sobra del efectivo después
-#     de gastos y rendición (nunca negativo: el déficit ya está cubierto
-#     por la deuda heredada, no reduce la ganancia del mes en curso).
+#     de gastos y rendición de ese mismo mes (nunca negativo).
 
 import logging
 import re
@@ -191,8 +191,9 @@ def listar_meses_ingresos(spreadsheet: gspread.Spreadsheet) -> list:
 
 
 def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base_default: float) -> dict:
-    """Recorre TODAS las hojas de mes en orden cronológico, acumulando el
-    déficit de rendición de un mes al siguiente. Devuelve {titulo: métricas}.
+    """Recorre TODAS las hojas de mes en orden cronológico. Devuelve
+    {titulo: métricas}. Cada mes es independiente — si un mes no llega al
+    objetivo de rendición, ese faltante no se arrastra al mes siguiente.
 
     El objetivo de rendición no es una constante: viene de la hoja
     RENDICION_OBJETIVO_BASE (una fila por cada vez que cambió el precio,
@@ -201,7 +202,6 @@ def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base_defau
     a la primera fila de esa tabla (o si la tabla no existe)."""
     meses = listar_meses_ingresos(spreadsheet)
     objetivos_config = leer_objetivo_por_mes(spreadsheet)
-    deuda_acumulada = 0.0
     objetivo_vigente = objetivo_base_default
     por_mes = {}
 
@@ -232,10 +232,9 @@ def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base_defau
 
         total_gastos = sum(g['monto'] for g in gastos)
 
-        objetivo_mes = objetivo_vigente + deuda_acumulada
+        objetivo_mes = objetivo_vigente
         neto_efectivo = total_efectivo - total_gastos
         entregado = max(min(neto_efectivo, objetivo_mes), 0)
-        deficit_nuevo = max(objetivo_mes - neto_efectivo, 0)
         ganancia_mes = total_transferencias + max(neto_efectivo - objetivo_mes, 0)
 
         por_mes[titulo] = {
@@ -247,14 +246,13 @@ def calcular_serie_mensual(spreadsheet: gspread.Spreadsheet, objetivo_base_defau
             'total_transferencias': total_transferencias,
             'total_efectivo': total_efectivo,
             'total_gastos': total_gastos,
-            'deuda_heredada': deuda_acumulada,
+            'deuda_heredada': 0.0,  # ya no se arrastra — se deja el campo en 0 para no romper el frontend
             'objetivo_rendicion': objetivo_mes,
             'entregado_a_socios': entregado,
             'progreso_pct': (entregado / objetivo_mes) if objetivo_mes > 0 else 1.0,
             'ganancia_mes': ganancia_mes,
             '_ingresos_raw': ingresos,  # uso interno de estado_cocheras, no va en la respuesta de la API
         }
-        deuda_acumulada = deficit_nuevo
 
     return por_mes
 
