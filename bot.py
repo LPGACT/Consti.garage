@@ -113,6 +113,19 @@ def extract_from_comprobante(file_path: str, mime_type: str) -> dict:
     return data
 
 
+_MARKDOWN_ESPECIALES = re.compile(r'([_*`\[])')
+
+
+def escapar_markdown(texto) -> str:
+    """Escapa los caracteres especiales del Markdown (legado) de Telegram
+    (_, *, `, [) en texto libre tipeado por el operador (nombre, categoría,
+    descripción) antes de interpolarlo en un mensaje con parse_mode='Markdown'
+    — así un nombre como "Juan_Perez" no rompe el parseo del mensaje de
+    confirmación (antes dependía solo del reintento en texto plano de
+    responder_con_reintento; esto evita tener que llegar a ese caso)."""
+    return _MARKDOWN_ESPECIALES.sub(r'\\\1', str(texto))
+
+
 async def responder_con_reintento(message, texto_principal: str, texto_fallback: str, **kwargs):
     """Manda la confirmación con formato (Markdown); si falla (ej. un caracter
     especial de Markdown en un nombre, un blip de red), reintenta con un
@@ -472,7 +485,7 @@ async def handle_comprobante(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await responder_con_reintento(
             message,
             f"✅ *Registrado — {data['mes']}*\n\n"
-            f"👤 {data['nombre']}\n"
+            f"👤 {escapar_markdown(data['nombre'])}\n"
             f"🅿️  Cochera {data['cochera']}\n"
             f"💰 Bruto: {format_pesos(monto)}{ib_line}\n"
             f"📅 {payment['fecha']}\n"
@@ -554,7 +567,7 @@ async def handle_efectivo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         total = sum(fila['monto'] for fila in data['filas'])
         detalle = "\n".join(
-            f"🅿️ Cochera {fila['cochera']} — {fila['nombre']} — {format_pesos(fila['monto'])}"
+            f"🅿️ Cochera {fila['cochera']} — {escapar_markdown(fila['nombre'])} — {format_pesos(fila['monto'])}"
             for fila in data['filas']
         )
 
@@ -606,9 +619,9 @@ async def handle_gastos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await responder_con_reintento(
             message,
             f"✅ *Gasto registrado — {data['mes']}*\n\n"
-            f"🏷️ {data['categoria']}\n"
+            f"🏷️ {escapar_markdown(data['categoria'])}\n"
             f"💸 {format_pesos(data['monto'])}\n"
-            f"📝 {data['descripcion']}",
+            f"📝 {escapar_markdown(data['descripcion'])}",
             f"✅ Gasto registrado — {data['mes']}: {data['categoria']}, {format_pesos(data['monto'])}",
             parse_mode='Markdown'
         )
@@ -662,7 +675,7 @@ async def handle_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await responder_con_reintento(
             message,
-            f"🔄 *Cochera {data['nro']}*\n{nombre_viejo} → {data['nombre_nuevo']}",
+            f"🔄 *Cochera {data['nro']}*\n{escapar_markdown(nombre_viejo)} → {escapar_markdown(data['nombre_nuevo'])}",
             f"🔄 Cochera {data['nro']}: {nombre_viejo} -> {data['nombre_nuevo']}",
             parse_mode='Markdown'
         )

@@ -1,5 +1,13 @@
 const TOKEN_KEY = 'dashboard_password';
 
+// Normaliza para comparar en los buscadores, ignorando acentos y mayúsculas
+// (ej. "nunez" debe encontrar "NUÑEZ") — mismo criterio que normaliza_nombre
+// en el backend (dashboard/padron.py), para que buscar acá funcione igual
+// que como matchea el bot los pagos de moto por nombre.
+function normalizaTexto(s) {
+  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
 const TITULOS_PAGINA = {
   resumen: ['Resumen', 'Así viene el mes'],
   ingresos: ['Ingresos', 'Pagos recibidos este mes'],
@@ -185,7 +193,11 @@ function ocultarCargando() {
 
 document.getElementById('error-retry').addEventListener('click', () => {
   ocultarError();
-  cargarPaginaActual();
+  if (meses.length === 0) {
+    init(); // todavía no cargó ni la lista de meses (falló la carga inicial)
+  } else {
+    cargarPaginaActual();
+  }
 });
 
 function actualizarBadgeCocheras(cocheras) {
@@ -297,9 +309,9 @@ function renderIngresos() {
   const filtrados = datos.filter((r) => {
     if (f.tipoPago !== 'TODOS' && r.tipo_pago !== f.tipoPago) return false;
     if (f.texto) {
-      const q = f.texto.toLowerCase();
-      const cochera = String(r.cochera).toLowerCase();
-      if (!r.nombre.toLowerCase().includes(q) && !cochera.includes(q)) return false;
+      const q = normalizaTexto(f.texto);
+      const cochera = normalizaTexto(r.cochera);
+      if (!normalizaTexto(r.nombre).includes(q) && !cochera.includes(q)) return false;
     }
     return true;
   });
@@ -344,10 +356,10 @@ document.getElementById('buscar-ingresos').addEventListener('input', (e) => {
 // ── Gastos ───────────────────────────────────────────────────────────────
 function renderGastos() {
   const datos = gastosDelMes;
-  const q = filtros.gastos.texto.toLowerCase();
+  const q = normalizaTexto(filtros.gastos.texto);
 
   const filtrados = q
-    ? datos.filter((g) => g.categoria.toLowerCase().includes(q) || g.descripcion.toLowerCase().includes(q))
+    ? datos.filter((g) => normalizaTexto(g.categoria).includes(q) || normalizaTexto(g.descripcion).includes(q))
     : datos;
 
   const cont = document.getElementById('gastos-lista');
@@ -394,8 +406,8 @@ function renderCocheras() {
     if (f.estado === 'PENDIENTES' && c.cobrada) return false;
     if (f.tipo !== 'TODOS' && c.tipo !== f.tipo) return false;
     if (f.texto) {
-      const q = f.texto.toLowerCase();
-      if (!String(c.nro).includes(q) && !c.nombre.toLowerCase().includes(q)) return false;
+      const q = normalizaTexto(f.texto);
+      if (!normalizaTexto(c.nro).includes(q) && !normalizaTexto(c.nombre).includes(q)) return false;
     }
     return true;
   });
@@ -447,7 +459,10 @@ document.getElementById('buscar-cocheras').addEventListener('input', (e) => {
 async function init() {
   try {
     meses = await fetchJSON('/api/meses');
+    ocultarError();
   } catch (e) {
+    if (e.message === '401') return; // ya se mostró la pantalla de login
+    mostrarError(mensajeDeError(e));
     return;
   }
   if (meses.length === 0) {

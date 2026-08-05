@@ -125,12 +125,24 @@ def leer_ingresos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
         fecha = fila[0] if len(fila) > 0 else ''
         if not str(fecha).strip():
             continue
+
+        monto = _parse_float(fila[3] if len(fila) > 3 else '')
+        ing_brutos = _parse_float(fila[4] if len(fila) > 4 else '')
+        if ing_brutos > monto:
+            # Dato mal cargado a mano (ej. tipeado en la columna equivocada)
+            # — sin este límite, ingreso_neto podía dar negativo en silencio.
+            logger.warning(
+                f"{titulo}: Ingresos Brutos ({ing_brutos}) mayor al Monto ({monto}) en la fila "
+                f"de {fila[2] if len(fila) > 2 else '?'!r} — se limita a {monto}."
+            )
+            ing_brutos = monto
+
         resultado.append({
             'fecha': fecha,
             'cochera': fila[1] if len(fila) > 1 else '',
             'nombre': str(fila[2]).strip() if len(fila) > 2 else '',
-            'monto': _parse_float(fila[3] if len(fila) > 3 else ''),
-            'ing_brutos': _parse_float(fila[4] if len(fila) > 4 else ''),
+            'monto': monto,
+            'ing_brutos': ing_brutos,
             'tipo_pago': str(fila[5]).strip() if len(fila) > 5 else '',
         })
     return resultado
