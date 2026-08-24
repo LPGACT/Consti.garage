@@ -14,6 +14,7 @@
 #     Mercado Pago, nunca se reparte) + lo que sobra del efectivo después
 #     de gastos y rendición de ese mismo mes (nunca negativo).
 
+import datetime
 import logging
 import re
 from typing import Optional
@@ -36,6 +37,23 @@ def _parse_float(value) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+_EPOCH_SHEETS = datetime.date(1899, 12, 30)
+
+
+def _normaliza_fecha(valor):
+    """Sheets a veces guarda una fecha como número de serie (días desde el
+    30/12/1899) en vez de texto 'DD/MM/YYYY' — pasa cuando se tipea la fecha
+    directo en la hoja y Google Sheets la autoconvierte a celda tipo Fecha
+    (el bot siempre escribe texto, así que esto solo pasa con carga manual).
+    Sin esto, el dashboard mostraba el número crudo (ej. '46237') como fecha."""
+    if isinstance(valor, (int, float)):
+        try:
+            return (_EPOCH_SHEETS + datetime.timedelta(days=int(valor))).strftime('%d/%m/%Y')
+        except (OverflowError, ValueError):
+            return str(valor)
+    return valor
 
 
 _TIPOS_PAGO_CONOCIDOS = {
@@ -138,7 +156,7 @@ def leer_ingresos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
             ing_brutos = monto
 
         resultado.append({
-            'fecha': fecha,
+            'fecha': _normaliza_fecha(fecha),
             'cochera': fila[1] if len(fila) > 1 else '',
             'nombre': str(fila[2]).strip() if len(fila) > 2 else '',
             'monto': monto,
@@ -166,7 +184,7 @@ def leer_gastos(spreadsheet: gspread.Spreadsheet, titulo: str) -> list:
         if not str(fecha).strip():
             continue
         resultado.append({
-            'fecha': fecha,
+            'fecha': _normaliza_fecha(fecha),
             'categoria': str(fila[1]).strip() if len(fila) > 1 else '',
             'monto': _parse_float(fila[2] if len(fila) > 2 else ''),
             'descripcion': str(fila[3]).strip() if len(fila) > 3 else '',
