@@ -26,6 +26,8 @@ from sheets_common import (
     HEADER_ROW, GASTOS_HEADER_ROW, PADRON_SHEET_TITLE,
     mes_sheet_title, gastos_sheet_title,
 )
+from dashboard.padron import leer_padron
+from dashboard.metrics import leer_ingresos, estado_cocheras
 
 # En local, los secretos viven fuera de la carpeta del proyecto (no sincronizada
 # por OneDrive/git). En Render no existe esa carpeta y load_dotenv() no hace nada,
@@ -40,6 +42,13 @@ ALLOWED_USER_ID = int(os.getenv('ALLOWED_USER_ID', 0))
 WEBHOOK_URL     = os.getenv('WEBHOOK_URL', '')
 WEBHOOK_SECRET  = os.getenv('WEBHOOK_SECRET', '')
 PORT            = int(os.getenv('PORT', 8000))
+
+# Precios para el reporte mensual de cocheras pendientes — actualizar cuando
+# cambie el precio (no afecta ningún cálculo de plata ya cobrada, solo esta
+# proyección de lo que falta cobrar).
+PRECIO_AUTO  = float(os.getenv('PRECIO_AUTO', 150000))
+PRECIO_MOTO  = float(os.getenv('PRECIO_MOTO', 95000))
+PRECIO_DOBLE = float(os.getenv('PRECIO_DOBLE', 195000))
 
 
 TZ_ARGENTINA = datetime.timezone(datetime.timedelta(hours=-3))
@@ -438,7 +447,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Ejemplo: `GASTOS, JUNIO, SUELDOS, 80000, Sueldo Carlos`\n\n"
         "*Cambio de dueño de cochera* — mensaje de texto:\n"
         "`CAMBIO, Nro, NombreNuevo`\n"
-        "Ejemplo: `CAMBIO, 34, Pedro Gómez`",
+        "Ejemplo: `CAMBIO, 34, Pedro Gómez`\n\n"
+        "*Cocheras pendientes de este mes* — mandá `PENDIENTES` como mensaje "
+        "de texto (también se manda solo el día 28 de cada mes a las 10hs).",
         parse_mode='Markdown'
     )
 
@@ -742,6 +753,98 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_gastos(update, context)
     elif primera_palabra == 'CAMBIO':
         await handle_cambio(update, context)
+    elif primera_palabra == 'PENDIENTES':
+        await handle_pendientes(update, context)
+
+
+# ─── Reporte mensual de cocheras pendientes ────────────────────────────────────
+def _armar_lineas_pendientes(padron: dict, ingresos: list) -> tuple:
+    """Devuelve (lineas, total) — una línea 'Nro, Nombre, Tipo, Monto' por
+    cada cochera OCUPADA que todavía no pagó este mes. Las dobles se listan
+    como un solo par ('23 y 24') con el precio del par, no dos líneas
+    separadas. Las cocheras vacías no aparecen — no hay a quién cobrarle."""
+    cocheras = estado_cocheras(ingresos, padron)
+    lineas = []
+    total = 0.0
+    vistos_dobles = set()
+
+    for c in cocheras['pendientes']:
+        if c['vacia']:
+            continue
+
+        if c['tipo'] == 'auto' and c['pareja']:
+            par = tuple(sorted((c['nro'], c['pareja'])))
+            if par in vistos_dobles:
+                continue
+            vistos_dobles.add(par)
+            nro_texto, tipo_texto, monto = f"{par[0]} y {par[1]}", 'DOBLE', PRECIO_DOBLE
+        elif c['tipo'] == 'auto':
+            nro_texto, tipo_texto, monto = str(c['nro']), 'AUTO', PRECIO_AUTO
+        else:
+            nro_texto, tipo_texto, monto = str(c['nro']), 'MOTO', PRECIO_MOTO
+
+        lineas.append(f"{nro_texto}, {escapar_markdown(c['nombre'])}, {tipo_texto}, {format_pesos(monto)}")
+        total += monto
+
+    return lineas, total
+
+
+async def _enviar_reporte_pendientes(bot):
+    """Arma y manda el reporte de cocheras pendientes del mes actual al chat
+    de ALLOWED_USER_ID. Usado tanto por el job mensual automático como por
+    el comando manual PENDIENTES (para poder probarlo sin esperar al día 28)."""
+    try:
+        mes_actual = MESES_ORDEN[datetime.datetime.now(TZ_ARGENTINA).month - 1]
+        spreadsheet = gc.open_by_key(SHEETS_ID)
+        padron = leer_padron(gc, SHEETS_ID)
+        ingresos = leer_ingresos(spreadsheet, mes_sheet_title(mes_actual))
+
+        lineas, total = _armar_lineas_pendientes(padron, ingresos)
+
+        if not lineas:
+            await bot.send_message(
+                chat_id=ALLOWED_USER_ID,
+                text=f"✅ *Cocheras pendientes — {mes_actual}*\n\nNo queda nadie sin cobrar. 🎉",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Telegram corta mensajes de más de 4096 caracteres — se parte en
+        # varios envíos en vez de arriesgarse a que falle el de un solo bloque.
+        pie = f"\n\n💰 *Total pendiente: {format_pesos(total)}*"
+        bloque = f"📋 *Cocheras pendientes — {mes_actual}*\n\n"
+        for linea in lineas:
+            if len(bloque) + len(linea) + 1 > 3800:
+                await bot.send_message(chat_id=ALLOWED_USER_ID, text=bloque, parse_mode='Markdown')
+                bloque = ''
+            bloque += linea + '\n'
+        bloque += pie
+        await bot.send_message(chat_id=ALLOWED_USER_ID, text=bloque, parse_mode='Markdown')
+
+    except Exception as e:
+        logger.error(f"Error armando el reporte mensual de pendientes: {e}", exc_info=True)
+        try:
+            await bot.send_message(
+                chat_id=ALLOWED_USER_ID,
+                text=f"❌ No pude armar el reporte mensual de cocheras pendientes.\n`{type(e).__name__}: {e}`",
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass
+
+
+async def reporte_pendientes_mensual(context: ContextTypes.DEFAULT_TYPE):
+    """Job mensual (día 28, 10:00 hora Argentina)."""
+    await _enviar_reporte_pendientes(context.bot)
+
+
+async def handle_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando manual — mismo reporte que el job mensual, para probarlo o
+    consultarlo cuando se quiera, sin esperar al día 28."""
+    if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
+        await update.message.reply_text("🚫 No tenés permisos para usar este bot.")
+        return
+    await _enviar_reporte_pendientes(context.bot)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -757,6 +860,19 @@ def main():
         filters.TEXT & ~filters.COMMAND,
         handle_text
     ))
+
+    if app.job_queue and ALLOWED_USER_ID:
+        app.job_queue.run_monthly(
+            reporte_pendientes_mensual,
+            when=datetime.time(10, 0, tzinfo=TZ_ARGENTINA),
+            day=28,
+        )
+        logger.info("Reporte mensual de cocheras pendientes programado: día 28, 10:00 hora Argentina.")
+    else:
+        logger.warning(
+            "No se pudo programar el reporte mensual de pendientes "
+            "(falta la dependencia job-queue o ALLOWED_USER_ID)."
+        )
 
     if WEBHOOK_URL:
         if not WEBHOOK_SECRET:

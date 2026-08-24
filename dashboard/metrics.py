@@ -331,11 +331,11 @@ def estado_cocheras(ingresos: list, padron: dict) -> dict:
     todas = (
         [
             {'nro': c.nro, 'nombre': c.nombre, 'tipo': 'auto', 'vacia': not c.ocupada,
-             'cobrada': c.nro in cobrados_nro}
+             'cobrada': c.nro in cobrados_nro, 'pareja': c.pareja}
             for c in padron['autos']
         ] + [
             {'nro': c.nro, 'nombre': c.nombre, 'tipo': 'moto', 'vacia': not c.ocupada,
-             'cobrada': normaliza_nombre(c.nombre) in cobrados_moto_nombre}
+             'cobrada': normaliza_nombre(c.nombre) in cobrados_moto_nombre, 'pareja': None}
             for c in padron['motos']
         ]
     )

@@ -201,6 +201,22 @@ CAMBIO, 34, Pedro Gómez
 
 Busca la cochera (auto o moto) por número en la hoja `PADRON` y reemplaza el nombre. Sirve para cuando cambia el inquilino. El bot confirma con el nombre viejo y el nuevo.
 
+### Cocheras pendientes de cobrar
+
+El bot manda automáticamente, **el día 28 de cada mes a las 10:00 (hora Argentina)**, un listado de todas las cocheras ocupadas que todavía no pagaron ese mes:
+
+```
+Nro, Nombre, Tipo, Monto
+...
+Total pendiente: $X
+```
+
+Las dobles aparecen como un solo par (`"23 y 24"`) con el precio del par, no dos líneas sueltas. Las cocheras vacías no aparecen — no hay a quién cobrarle. Si el mensaje es muy largo, Telegram lo corta, así que el bot lo manda en varios mensajes si hace falta.
+
+También podés pedirlo en cualquier momento mandando `PENDIENTES` como mensaje de texto, sin esperar al día 28.
+
+Los precios (`PRECIO_AUTO`, `PRECIO_MOTO`, `PRECIO_DOBLE` en el `.env`/Render) son independientes de todo lo demás — solo se usan para este reporte, no afectan ningún monto ya cobrado ni la rendición a socios. Actualizalos cuando cambie el precio.
+
 ---
 
 ## Nombres de hoja con año
