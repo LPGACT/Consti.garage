@@ -11,10 +11,10 @@
   --text-secondary: #5f5f5f; /* gris más oscuro de la misma familia, para contraste sobre vidrio */
   --text-muted: var(--gris);
 
-  --glass: rgba(255, 255, 255, 0.38);
+  --glass: rgba(255, 255, 255, 0.34);
   --glass-strong: rgba(255, 255, 255, 0.55);
   --glass-border: rgba(255, 255, 255, 0.75);
-  --glass-blur: blur(28px) saturate(180%);
+  --glass-blur: blur(24px) saturate(180%) brightness(1.08);
   /* Brillo especular + borde interno de luz: lo que hace que parezca vidrio
      y no una tarjeta blanca semitransparente. */
   --glass-highlight:
@@ -32,14 +32,15 @@
 
 * { box-sizing: border-box; }
 
+html { background: var(--crema); }
 html, body {
   overflow-x: hidden;
   max-width: 100%;
   margin: 0;
   padding: 0;
-  background: var(--crema);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
+  background: transparent; /* si body pinta crema tapa la foto fija (z-index -1) */
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
@@ -57,13 +58,13 @@ button { font-family: inherit; color: inherit; }
   inset: 0;
   z-index: -1;
   background:
-    linear-gradient(180deg, rgba(245, 243, 239, 0.62), rgba(245, 243, 239, 0.80)),
+    linear-gradient(180deg, rgba(245, 243, 239, 0.10), rgba(245, 243, 239, 0.22)),
     url('/static/bg-desktop.jpg') center / cover no-repeat;
 }
 @media (max-width: 768px) {
   #app::before, #login-view::before {
     background:
-      linear-gradient(180deg, rgba(245, 243, 239, 0.60), rgba(245, 243, 239, 0.82)),
+      linear-gradient(180deg, rgba(245, 243, 239, 0.08), rgba(245, 243, 239, 0.20)),
       url('/static/bg-mobile.jpg') center / cover no-repeat;
   }
 }
@@ -346,7 +347,7 @@ button { font-family: inherit; color: inherit; }
   align-items: center;
   gap: 10px;
   padding: 13px 16px;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.40);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   box-shadow: var(--glass-highlight), 0 2px 8px rgba(10, 10, 10, 0.05);
