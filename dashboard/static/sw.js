@@ -2,10 +2,12 @@
 // network-first para /api/* — los datos financieros nunca deben servirse
 // stale sin que el usuario lo sepa.
 
-const CACHE_NAME = 'consti-garage-v3';
+const CACHE_NAME = 'consti-garage-v5';
 const SHELL = [
   '/',
   '/static/styles.css',
+  '/static/bg-desktop.jpg',
+  '/static/bg-mobile.jpg',
   '/static/app.js',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',

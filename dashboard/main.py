@@ -96,18 +96,18 @@ async def login(body: LoginBody):
 
 
 @app.get('/api/meses', dependencies=[Depends(require_auth)])
-async def meses():
+def meses():
     if DEMO:
         from dashboard.demo_data import DEMO_MESES
         return DEMO_MESES
-    return [
+    return cached('meses', SERIE_CACHE_TTL, lambda: [
         {'mes': mes, 'anio': anio, 'titulo': titulo}
         for mes, anio, titulo in listar_meses_ingresos(_spreadsheet())
-    ]
+    ])
 
 
 @app.get('/api/dashboard', dependencies=[Depends(require_auth)])
-async def dashboard(mes: Optional[str] = None, anio: Optional[int] = None):
+def dashboard(mes: Optional[str] = None, anio: Optional[int] = None):
     mes, anio = _resolver_mes(mes, anio)
     titulo = mes_sheet_title(mes, anio)
 
@@ -129,7 +129,7 @@ async def dashboard(mes: Optional[str] = None, anio: Optional[int] = None):
 
 
 @app.get('/api/ingresos', dependencies=[Depends(require_auth)])
-async def ingresos(mes: Optional[str] = None, anio: Optional[int] = None):
+def ingresos(mes: Optional[str] = None, anio: Optional[int] = None):
     mes, anio = _resolver_mes(mes, anio)
     titulo = mes_sheet_title(mes, anio)
 
@@ -149,7 +149,7 @@ async def ingresos(mes: Optional[str] = None, anio: Optional[int] = None):
 
 
 @app.get('/api/gastos', dependencies=[Depends(require_auth)])
-async def gastos(mes: Optional[str] = None, anio: Optional[int] = None):
+def gastos(mes: Optional[str] = None, anio: Optional[int] = None):
     mes, anio = _resolver_mes(mes, anio)
 
     if DEMO:
@@ -157,7 +157,7 @@ async def gastos(mes: Optional[str] = None, anio: Optional[int] = None):
         return DEMO_GASTOS.get(mes_sheet_title(mes, anio), [])
 
     titulo = gastos_sheet_title(mes, anio)
-    filas = leer_gastos(_spreadsheet(), titulo)
+    filas = cached(f'gastos:{titulo}', SERIE_CACHE_TTL, lambda: leer_gastos(_spreadsheet(), titulo))
     return [
         {**g, 'monto_fmt': format_pesos(g['monto'])}
         for g in filas
