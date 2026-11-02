@@ -358,10 +358,10 @@ button { font-family: inherit; color: inherit; }
 .lista-item .subtitulo { font-size: 12px; color: var(--text-secondary); }
 .lista-item .monto { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
 
-/* Tags sin color: cobrada = negro lleno, pendiente = contorno gris. */
+/* Estado de cochera: únicos colores fuera de la paleta base, a pedido del dueño. */
 .tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; flex-shrink: 0; letter-spacing: 0.03em; }
-.tag-cobrada { background: var(--negro); color: var(--blanco); }
-.tag-pendiente { background: transparent; color: var(--text-secondary); border: 1px solid var(--gris); }
+.tag-cobrada { background: #064E3B; color: var(--blanco); }
+.tag-pendiente { background: #4A0E17; color: var(--blanco); }
 .tag-tipo { background: rgba(10, 10, 10, 0.07); color: var(--negro); }
 
 .aviso-sin-identificar { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
